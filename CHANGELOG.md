@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.0
+
+Timeout was still aborting the handler. A handler that already wrote the DB then saw AbortError, dropped inflight, and Stripe retried into a second fulfill. 1.6.0 returns 500 to the sender and leaves the work running. Late success commits. Late throw drops.
+
+GitHub and Shopify now infer the event family from the signed JSON first. If the body looks like a push or an order, an unsigned header like `gollum` or `app/uninstalled` is refused. Bodies that do not look like those families stay fail-open after HMAC.
+
 ## 1.5.0
 
 A handler timeout no longer drops the inflight claim while that work is still running. Stripe retry used to start a second handler. Now the slot stays until the first work settles: success commits (retry is a duplicate), throw drops (retry can run). Inflight hold is at least one minute, or `handlerTimeoutMs` plus one minute.

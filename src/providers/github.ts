@@ -62,52 +62,39 @@ export const github: Provider = {
     if (!githubEventMatchesBody(eventName, payload)) {
       throw new DoorbellError('X-GitHub-Event does not match the signed body.', {
         code: 'bad_header',
-        hint: 'GitHub does not HMAC that header. A captured push labelled issues will not run on[issues].',
+        hint: 'GitHub does not HMAC that header. If the signed JSON looks like a push, gollum will not run on[gollum].',
       })
     }
     return { timestampSec: undefined }
   },
 }
 
-/** Known GitHub events have a body shape. Unknown events stay fail-open after HMAC. */
+/** Infer from the signed JSON, then require the unsigned event name to match that family. */
 export function githubEventMatchesBody(eventName: string, payload: unknown): boolean {
   const event = eventName.trim().toLowerCase()
   if (!event) return false
-  switch (event) {
-    case 'ping':
-      return hasOwn(payload, 'zen')
-    case 'push':
-      return hasOwn(payload, 'ref') || hasOwn(payload, 'commits')
-    case 'issues':
-      return hasOwn(payload, 'issue') && !hasOwn(payload, 'comment')
-    case 'issue_comment':
-      return hasOwn(payload, 'issue') && hasOwn(payload, 'comment')
-    case 'pull_request':
-      return hasOwn(payload, 'pull_request') && !hasOwn(payload, 'review')
-    case 'pull_request_review':
-      return hasOwn(payload, 'review') && hasOwn(payload, 'pull_request')
-    case 'pull_request_review_comment':
-      return hasOwn(payload, 'comment') && hasOwn(payload, 'pull_request')
-    case 'release':
-      return hasOwn(payload, 'release')
-    case 'workflow_run':
-      return hasOwn(payload, 'workflow_run')
-    case 'workflow_job':
-      return hasOwn(payload, 'workflow_job')
-    case 'check_run':
-      return hasOwn(payload, 'check_run')
-    case 'check_suite':
-      return hasOwn(payload, 'check_suite')
-    case 'create':
-    case 'delete':
-      return hasOwn(payload, 'ref_type')
-    case 'fork':
-      return hasOwn(payload, 'forkee')
-    case 'star':
-      return hasOwn(payload, 'starred_at')
-    default:
-      return true
-  }
+  const allowed = githubEventsForBody(payload)
+  if (!allowed) return true
+  return allowed.includes(event)
+}
+
+function githubEventsForBody(payload: unknown): string[] | undefined {
+  if (hasOwn(payload, 'zen')) return ['ping']
+  if (hasOwn(payload, 'workflow_run')) return ['workflow_run']
+  if (hasOwn(payload, 'workflow_job')) return ['workflow_job']
+  if (hasOwn(payload, 'check_run')) return ['check_run']
+  if (hasOwn(payload, 'check_suite')) return ['check_suite']
+  if (hasOwn(payload, 'release')) return ['release']
+  if (hasOwn(payload, 'forkee')) return ['fork']
+  if (hasOwn(payload, 'starred_at')) return ['star']
+  if (hasOwn(payload, 'issue') && hasOwn(payload, 'comment')) return ['issue_comment']
+  if (hasOwn(payload, 'issue')) return ['issues']
+  if (hasOwn(payload, 'review') && hasOwn(payload, 'pull_request')) return ['pull_request_review']
+  if (hasOwn(payload, 'comment') && hasOwn(payload, 'pull_request')) return ['pull_request_review_comment']
+  if (hasOwn(payload, 'pull_request')) return ['pull_request']
+  if (hasOwn(payload, 'ref_type')) return ['create', 'delete']
+  if (hasOwn(payload, 'ref') || hasOwn(payload, 'commits')) return ['push']
+  return undefined
 }
 
 export function sniffMeta(headers: HeaderMap): boolean {

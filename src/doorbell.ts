@@ -240,14 +240,13 @@ export function doorbell(config: DoorbellConfig): Doorbell {
 
     const work = Promise.resolve(fn(event)).then(() => undefined)
     try {
-      await awaitHandler(work, handlerTimeoutMs, ac)
+      await awaitHandler(work, handlerTimeoutMs)
       await store.commit(key, ttl)
       return json(200, { ok: true, id: event.id, type: event.type })
     } catch (err) {
-      ac.abort()
       if (err instanceof DoorbellError && err.code === 'timeout') {
-        // Keep the inflight slot until this work actually finishes.
-        // Dropping here lets a Stripe retry run while the first handler is still going.
+        // Do not abort. Abort turns a handler that already wrote the DB into a throw,
+        // which drops inflight and lets Stripe retry fulfill again.
         void work.then(
           () => store.commit(key, ttl).catch(() => undefined),
           () => store.drop(key).catch(() => undefined),
@@ -255,6 +254,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
         config.onError?.(err, event)
         return text(err.status, err.toText())
       }
+      ac.abort()
       await store.drop(key)
       config.onError?.(err, event)
       const wrapped = new DoorbellError('Handler threw. Told the sender to retry.', {
@@ -367,11 +367,7 @@ function pickHandler(cfg: ProviderConfig, type: string): WebhookHandler | undefi
   return undefined
 }
 
-async function awaitHandler(
-  work: Promise<void>,
-  timeoutMs: number | undefined,
-  ac: AbortController,
-): Promise<void> {
+async function awaitHandler(work: Promise<void>, timeoutMs: number | undefined): Promise<void> {
   if (timeoutMs == null || timeoutMs <= 0) {
     await work
     return
@@ -382,7 +378,6 @@ async function awaitHandler(
       work,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
-          ac.abort()
           reject(
             new DoorbellError('Handler ran too long.', {
               code: 'timeout',

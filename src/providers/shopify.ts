@@ -40,7 +40,7 @@ export const shopify: Provider = {
     if (!shopifyTopicMatchesBody(topic, payload)) {
       throw new DoorbellError('X-Shopify-Topic does not match the signed body.', {
         code: 'bad_header',
-        hint: 'Shopify does not HMAC that header. An order body labelled products/create will not run on[products/create].',
+        hint: 'Shopify does not HMAC that header. If the signed JSON looks like an order, app/uninstalled will not run on[app/uninstalled].',
       })
     }
     return { timestampSec: undefined }
@@ -50,11 +50,16 @@ export const shopify: Provider = {
 export function shopifyTopicMatchesBody(topic: string, payload: unknown): boolean {
   const t = topic.trim().toLowerCase()
   if (!t) return false
-  if (t.startsWith('orders/') || t.startsWith('checkouts/')) {
-    return hasOwn(payload, 'line_items') || hasOwn(payload, 'order_number') || hasOwn(payload, 'checkout_id')
-  }
-  if (t.startsWith('products/')) {
-    return hasOwn(payload, 'variants') || hasOwn(payload, 'product_type')
-  }
+  const family = shopifyFamilyForBody(payload)
+  if (family === 'orders') return t.startsWith('orders/') || t.startsWith('checkouts/')
+  if (family === 'products') return t.startsWith('products/')
   return true
+}
+
+function shopifyFamilyForBody(payload: unknown): 'orders' | 'products' | undefined {
+  if (hasOwn(payload, 'line_items') || hasOwn(payload, 'order_number') || hasOwn(payload, 'checkout_id')) {
+    return 'orders'
+  }
+  if (hasOwn(payload, 'variants') || hasOwn(payload, 'product_type')) return 'products'
+  return undefined
 }

@@ -82,7 +82,7 @@ Slack, Svix, Clerk, Resend, Paddle, and Linear (when `webhookTimestamp` is in th
 
 Shopify HMAC is the body only. `X-Shopify-Triggered-At` is not signed, so doorbell does not clock on it. An attacker who captured a valid body can set that header to now.
 
-GitHub HMAC is the body only. `X-GitHub-Delivery` and `X-GitHub-Event` are not signed. Doorbell keys GitHub/Shopify/Meta retries on a hash of the raw bytes, not those headers. For the common GitHub events (ping, push, issues, pull_request, and a few more) doorbell also checks that the unsigned event name matches the signed JSON. A captured push labelled `issues` does not run `on['issues']`. Unknown GitHub events stay fail-open after HMAC. `onAny` and then reading the payload is still the honest path for the long tail. Shopify does the same for `orders/`, `checkouts/`, and `products/` topics.
+GitHub HMAC is the body only. `X-GitHub-Delivery` and `X-GitHub-Event` are not signed. Doorbell keys GitHub/Shopify/Meta retries on a hash of the raw bytes, not those headers. If the signed JSON looks like a ping, push, issues, or pull_request, the unsigned event name has to be in that family. A captured push labelled `gollum` does not run `on['gollum']`. Bodies that do not look like those families stay fail-open after HMAC, so `app/uninstalled` still works when the JSON is not an order. `onAny` and then reading the payload is still the honest path for the long tail.
 
 A missing signature header still runs HMAC, so that path is not faster than a bad one.
 
@@ -99,9 +99,9 @@ Meta `hub.verify_token` is compared in constant time. Slack URL verification sti
 | Provider | Notes |
 | --- | --- |
 | Stripe | Endpoint signing secret. Not `sk_live_`. Future timestamps allowed, old ones not. |
-| GitHub | Webhook Secret field. Ping is the signed `zen` field. Delivery and event headers are not in the HMAC. Common events must match the body. Not a PAT. |
+| GitHub | Webhook Secret field. Ping is the signed `zen` field. Delivery and event headers are not in the HMAC. If the JSON looks like a push, gollum is refused. Not a PAT. |
 | Slack | Signing Secret. URL verification is answered after HMAC. Not `xoxb-`. |
-| Shopify | `X-Shopify-Hmac-Sha256` over the body. Topic, webhook-id, and triggered-at are not signed. |
+| Shopify | `X-Shopify-Hmac-Sha256` over the body. Topic, webhook-id, and triggered-at are not signed. An order body cannot be labelled `app/uninstalled`. |
 | Svix / Clerk / Resend | Standard Webhooks. Path required if you take more than one. Both-way clock. |
 | Linear, Paddle | Hex / `ts;h1`. Linear also checks `webhookTimestamp` when it is present. |
 | Meta | POST signed. GET `hub.challenge` needs `verifyToken` |
@@ -115,7 +115,7 @@ A handler crash returns 500 so the sender retries.
 
 Same signed body twice returns 200 and skips the work. For Stripe that is `event.id`. For GitHub and Shopify it is a hash of the bytes, because their id headers are unsigned. Two copies at once wait on the first one. A stuck inflight claim expires after a minute so the next delivery is not wedged. If you set `handlerTimeoutMs`, that hold is at least the timeout plus a minute.
 
-Default body cap is 5MB. The fetch path stops reading once the cap is hit, so a 50MB POST is not fully buffered then rejected. `handlerTimeoutMs` cuts a stuck handler and tells the sender to retry. The inflight slot stays until that work actually finishes. If it later succeeds, the retry is a duplicate. If it later throws, the retry can run. Dropping the slot at timeout is how you fulfill twice.
+Default body cap is 5MB. The fetch path stops reading once the cap is hit, so a 50MB POST is not fully buffered then rejected. `handlerTimeoutMs` returns 500 so the sender retries. It does not abort the handler. Abort after a write is how a late throw drops inflight and Stripe fulfills twice. The inflight slot stays until that work actually finishes. If it later succeeds, the retry is a duplicate. If it later throws, the retry can run.
 
 ## Tests
 

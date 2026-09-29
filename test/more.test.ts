@@ -122,6 +122,64 @@ describe('shopify linear paddle', () => {
     expect(ran).toBe(false)
   })
 
+  it('refuses an order body labelled app/uninstalled', async () => {
+    const payload = '{"id":1,"name":"Order","line_items":[]}'
+    const secret = 'shopify_shared_secret'
+    const hmac = await signShopify(payload, secret)
+    let ran = false
+    const app = doorbell({
+      shopify: {
+        secret,
+        on: {
+          'app/uninstalled': async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/shopify', {
+        method: 'POST',
+        headers: {
+          'x-shopify-hmac-sha256': hmac,
+          'x-shopify-topic': 'app/uninstalled',
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(ran).toBe(false)
+  })
+
+  it('still runs app/uninstalled when the body is not an order', async () => {
+    const payload = '{"id":"gid://shopify/AppInstallation/1"}'
+    const secret = 'shopify_shared_secret'
+    const hmac = await signShopify(payload, secret)
+    let ran = false
+    const app = doorbell({
+      shopify: {
+        secret,
+        on: {
+          'app/uninstalled': async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/shopify', {
+        method: 'POST',
+        headers: {
+          'x-shopify-hmac-sha256': hmac,
+          'x-shopify-topic': 'app/uninstalled',
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(ran).toBe(true)
+  })
+
   it('verifies linear hex hmac', async () => {
     const payload = '{"action":"create","type":"Issue"}'
     const secret = 'linear_webhook_secret'

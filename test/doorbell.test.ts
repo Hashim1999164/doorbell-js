@@ -310,6 +310,64 @@ describe('github', () => {
     expect(res.status).toBe(400)
     expect(ran).toBe(false)
   })
+
+  it('refuses a push body labelled as an unknown GitHub event', async () => {
+    const payload = '{"ref":"refs/heads/main"}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    let ran = false
+    const app = doorbell({
+      github: {
+        secret,
+        on: {
+          gollum: async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'gollum',
+          'x-hub-signature-256': sig,
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(ran).toBe(false)
+  })
+
+  it('still runs gollum when the body is not a known GitHub family', async () => {
+    const payload = '{"pages":[{"page_name":"Home"}]}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    let ran = false
+    const app = doorbell({
+      github: {
+        secret,
+        on: {
+          gollum: async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'gollum',
+          'x-hub-signature-256': sig,
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(ran).toBe(true)
+  })
 })
 
 describe('slack', () => {

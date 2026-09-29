@@ -191,6 +191,38 @@ describe('limits', () => {
     expect((await send()).status).toBe(200)
     expect(ran).toBe(2)
   })
+
+  it('does not abort a timed out handler, so a late success still commits', async () => {
+    let aborted: boolean | undefined
+    const payload = '{"id":"evt_slow4","type":"ping"}'
+    const secret = 'whsec_test_secret'
+    const header = await signStripe(payload, secret, TS)
+    const app = doorbell({
+      now: NOW,
+      handlerTimeoutMs: 20,
+      stripe: {
+        secret,
+        onAny: async (event) => {
+          await new Promise((resolve) => setTimeout(resolve, 60))
+          aborted = event.signal.aborted
+        },
+      },
+    })
+    const send = () =>
+      app(
+        new Request('http://shop.test/webhooks/stripe', {
+          method: 'POST',
+          headers: { 'stripe-signature': header },
+          body: payload,
+        }),
+      )
+    expect((await send()).status).toBe(500)
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect(aborted).toBe(false)
+    const retry = await send()
+    expect(retry.status).toBe(200)
+    expect(await retry.json()).toMatchObject({ duplicate: true })
+  })
 })
 
 describe('express rawBody', () => {
