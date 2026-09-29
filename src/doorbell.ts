@@ -237,6 +237,9 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     if (claim === 'duplicate') {
       return json(200, { ok: true, duplicate: true, id: event.id })
     }
+    // Pin until this work settles. Timeout plus inflightMs is still too short
+    // if the handler keeps running after we already returned 500.
+    await store.pin?.(key)
 
     const work = Promise.resolve(fn(event)).then(() => undefined)
     try {

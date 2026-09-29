@@ -368,6 +368,35 @@ describe('github', () => {
     expect(res.status).toBe(200)
     expect(ran).toBe(true)
   })
+
+  it('refuses a delete body labelled create', async () => {
+    const payload = '{"ref":"simple-tag","ref_type":"tag"}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    let ran = false
+    const app = doorbell({
+      github: {
+        secret,
+        on: {
+          create: async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'create',
+          'x-hub-signature-256': sig,
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(ran).toBe(false)
+  })
 })
 
 describe('slack', () => {

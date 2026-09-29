@@ -223,6 +223,38 @@ describe('limits', () => {
     expect(retry.status).toBe(200)
     expect(await retry.json()).toMatchObject({ duplicate: true })
   })
+
+  it('does not let inflight expire while a timed out handler is still running', async () => {
+    let ran = 0
+    const payload = '{"id":"evt_slow5","type":"ping"}'
+    const secret = 'whsec_test_secret'
+    const header = await signStripe(payload, secret, Math.floor(Date.now() / 1000))
+    const app = doorbell({
+      store: new MemoryStore(Date.now, 40),
+      handlerTimeoutMs: 20,
+      stripe: {
+        secret,
+        onAny: async () => {
+          ran += 1
+          await new Promise((resolve) => setTimeout(resolve, 120))
+        },
+      },
+    })
+    const send = () =>
+      app(
+        new Request('http://shop.test/webhooks/stripe', {
+          method: 'POST',
+          headers: { 'stripe-signature': header },
+          body: payload,
+        }),
+      )
+    expect((await send()).status).toBe(500)
+    await new Promise((resolve) => setTimeout(resolve, 70))
+    const retry = await send()
+    expect(ran).toBe(1)
+    expect(retry.status).toBe(200)
+    expect(await retry.json()).toMatchObject({ duplicate: true })
+  })
 })
 
 describe('express rawBody', () => {
@@ -462,5 +494,17 @@ describe('inflight claim', () => {
     expect(await store.claim('k')).toBe('run')
     t += 201
     expect(await store.claim('k')).toBe('run')
+  })
+
+  it('holds a pinned inflight slot past the expiry window', async () => {
+    let t = 1000
+    const store = new MemoryStore(() => t, 50)
+    expect(await store.claim('k')).toBe('run')
+    await store.pin?.('k')
+    t += 200
+    const waiter = store.claim('k')
+    t += 1
+    await store.commit('k', 1000)
+    expect(await waiter).toBe('duplicate')
   })
 })

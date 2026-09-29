@@ -26,8 +26,9 @@ export const github: Provider = {
     return bodyFingerprint(raw)
   },
   eventType(headers, payload) {
-    // X-GitHub-Event is not in the HMAC. Prefer onAny and read the payload.
-    const event = header(headers, 'x-github-event') ?? 'unknown'
+    // X-GitHub-Event is not in the HMAC. Known shapes take the type from the signed JSON.
+    const inferred = githubEventsForBody(payload)
+    const event = inferred?.[0] ?? header(headers, 'x-github-event') ?? 'unknown'
     const action = stringField(payload, 'action')
     return action ? `${event}.${action}` : event
   },
@@ -92,7 +93,8 @@ function githubEventsForBody(payload: unknown): string[] | undefined {
   if (hasOwn(payload, 'review') && hasOwn(payload, 'pull_request')) return ['pull_request_review']
   if (hasOwn(payload, 'comment') && hasOwn(payload, 'pull_request')) return ['pull_request_review_comment']
   if (hasOwn(payload, 'pull_request')) return ['pull_request']
-  if (hasOwn(payload, 'ref_type')) return ['create', 'delete']
+  // create always has master_branch. delete is ref_type without it.
+  if (hasOwn(payload, 'ref_type')) return hasOwn(payload, 'master_branch') ? ['create'] : ['delete']
   if (hasOwn(payload, 'ref') || hasOwn(payload, 'commits')) return ['push']
   return undefined
 }

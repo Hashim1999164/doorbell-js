@@ -34,7 +34,7 @@ describe('shopify linear paddle', () => {
       }),
     )
     expect(res.status).toBe(200)
-    expect(topic).toBe('orders/create')
+    expect(topic).toBe('orders')
   })
 
   it('does not clock Shopify on X-Shopify-Triggered-At because that header is not signed', async () => {
@@ -149,6 +149,40 @@ describe('shopify linear paddle', () => {
     )
     expect(res.status).toBe(400)
     expect(ran).toBe(false)
+  })
+
+  it('does not run on[orders/paid] from the unsigned topic header', async () => {
+    const payload = '{"id":1,"name":"Order","line_items":[]}'
+    const secret = 'shopify_shared_secret'
+    const hmac = await signShopify(payload, secret)
+    let paid = false
+    let orders = false
+    const app = doorbell({
+      shopify: {
+        secret,
+        on: {
+          'orders/paid': async () => {
+            paid = true
+          },
+          orders: async () => {
+            orders = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/shopify', {
+        method: 'POST',
+        headers: {
+          'x-shopify-hmac-sha256': hmac,
+          'x-shopify-topic': 'orders/paid',
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(paid).toBe(false)
+    expect(orders).toBe(true)
   })
 
   it('still runs app/uninstalled when the body is not an order', async () => {

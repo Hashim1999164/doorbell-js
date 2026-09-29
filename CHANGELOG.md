@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.0
+
+Inflight expiry still stole the slot while a timed out handler was writing. Pin the claim until that work commits or drops.
+
+GitHub `event.type` for known shapes comes from the signed JSON, including create vs delete. Shopify order bodies are type `orders`. `on['orders/paid']` does not run from the unsigned topic header.
+
 ## 1.6.0
 
 Timeout was still aborting the handler. A handler that already wrote the DB then saw AbortError, dropped inflight, and Stripe retried into a second fulfill. 1.6.0 returns 500 to the sender and leaves the work running. Late success commits. Late throw drops.
