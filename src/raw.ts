@@ -1,4 +1,4 @@
-import { asRawBody } from './bytes.js'
+import { asRawBody, copyBytes } from './bytes.js'
 
 type RawCarrier = {
   rawBody?: unknown
@@ -14,7 +14,25 @@ export function preserveRawBody(
   _res: unknown,
   buf: Uint8Array,
 ): void {
-  req.rawBody = buf instanceof Uint8Array ? buf : new Uint8Array(buf as ArrayBuffer)
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf as ArrayBuffer)
+  req.rawBody = copyBytes(bytes)
+}
+
+/**
+ * fastify.addContentTypeParser('application/json', { parseAs: 'buffer' }, captureFastifyBuffer)
+ * doorbell.fastify then HMAC the copy, not Fastify's live buffer.
+ */
+export function captureFastifyBuffer(
+  req: RawCarrier,
+  body: Uint8Array,
+  done: (err: Error | null, payload?: Uint8Array) => void,
+): void {
+  try {
+    req.rawBody = asRawBody(body)
+    done(null, body)
+  } catch (err) {
+    done(err instanceof Error ? err : new Error(String(err)))
+  }
 }
 
 export function rawFromNodeRequest(req: RawCarrier): Uint8Array {

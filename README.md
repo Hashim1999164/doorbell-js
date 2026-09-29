@@ -56,26 +56,46 @@ Or give that route `express.raw({ type: 'application/json' })` and skip the glob
 
 If you parsed the body and did not keep the bytes, doorbell tells you. In English.
 
+Fastify people: `addContentTypeParser('application/json', { parseAs: 'buffer' }, captureFastifyBuffer)` then `hooks.fastify`.
+
 ## The part people get wrong
 
 Stripe signs `timestamp + '.' + raw bytes`.
 
 Not the JSON object. Not `JSON.stringify(JSON.parse(body))`. Not a UTF-8 round trip of those bytes.
 
+stripe-node itself decodes the body to a string before HMAC. That is how a payload with a stray 0xFF byte verifies in one library and fails in another. doorbell HMAC the bytes that arrived. Then it copies them, so a shared Buffer from Express cannot change under the check.
+
 If a proxy or `express.json()` rewrites whitespace, the seal check fails forever and you will think the secret is wrong.
 
 `whsec_` is also not one thing. Stripe uses the whole string as the HMAC key. Svix / Clerk / Resend strip `whsec_` and base64-decode the rest. Same prefix, different math. Mix them up and every request looks forged.
+
+Compare the digest bytes, not the header string. `===` on hex is how you leak the secret one character at a time.
+
+## Time
+
+Stripe-node only rejects events that are too old. A Stripe timestamp two minutes in the future still verifies. doorbell matches that, because your handler should not disagree with `constructEvent`.
+
+Slack, Svix, Clerk, Resend, Paddle, and Linear (when `webhookTimestamp` is in the signed JSON) reject both too old and too new. A timestamp from next week is how you stash a signed body and replay it when the clock catches up.
+
+Default window is 5 minutes. Fix NTP. Do not turn this off in production.
+
+## Headers
+
+Signature headers that contain a newline or that are bigger than 8KB are refused before parse. Sixteen v1 signatures is enough. More than that is someone burning CPU.
+
+Meta `hub.verify_token` is compared in constant time. Slack URL verification still waits for HMAC. There is no unsigned POST shortcut.
 
 ## Who can knock
 
 | Provider | Notes |
 | --- | --- |
-| Stripe | Endpoint signing secret. Not `sk_live_`. |
+| Stripe | Endpoint signing secret. Not `sk_live_`. Future timestamps allowed, old ones not. |
 | GitHub | Webhook Secret field. Ping is answered. Not a PAT. |
-| Slack | Signing Secret. URL verification is answered. Not `xoxb-`. |
+| Slack | Signing Secret. URL verification is answered after HMAC. Not `xoxb-`. |
 | Shopify | `X-Shopify-Hmac-Sha256` |
-| Svix / Clerk / Resend | Standard Webhooks. Path required if you take more than one. |
-| Linear, Paddle | Hex / `ts;h1` |
+| Svix / Clerk / Resend | Standard Webhooks. Path required if you take more than one. Both-way clock. |
+| Linear, Paddle | Hex / `ts;h1`. Linear also checks `webhookTimestamp` when it is present. |
 | Meta | POST signed. GET `hub.challenge` needs `verifyToken` |
 | Twilio | Auth token plus the public URL Twilio called |
 
@@ -86,8 +106,6 @@ Unknown event types return 200. Stripe retries 5xx. You do not want a week of `c
 A handler crash returns 500 so the sender retries.
 
 Same event id twice returns 200 and skips the work. Two copies at once wait on the first one.
-
-Default replay window is 5 minutes.
 
 Default body cap is 5MB. A stuck handler can be cut off with `handlerTimeoutMs`.
 

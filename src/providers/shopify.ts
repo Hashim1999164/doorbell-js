@@ -1,6 +1,6 @@
 import { DoorbellError, secretHint } from '../errors.js'
-import { header } from '../headers.js'
-import { matchBase64Mac } from '../hmac.js'
+import { header, sigHeader } from '../headers.js'
+import { matchAnyBase64Mac } from '../hmac.js'
 import { parseJsonBody } from '../json.js'
 import type { HeaderMap } from '../headers.js'
 import type { Provider } from './types.js'
@@ -20,14 +20,11 @@ export const shopify: Provider = {
     return header(headers, 'x-shopify-topic') ?? 'unknown'
   },
   async verify(ctx) {
-    const hmac = header(ctx.headers, 'x-shopify-hmac-sha256')
+    const hmac = sigHeader(ctx.headers, 'x-shopify-hmac-sha256', 'Shopify')
     if (!hmac) {
       throw new DoorbellError('No X-Shopify-Hmac-Sha256 header.', { code: 'missing_header' })
     }
-    let ok = false
-    for (const key of ctx.secrets) {
-      if (await matchBase64Mac(key, ctx.raw, hmac)) ok = true
-    }
+    const ok = await matchAnyBase64Mac(ctx.secrets, ctx.raw, [hmac])
     if (!ok) {
       throw new DoorbellError('Shopify signature did not match.', {
         code: 'bad_signature',

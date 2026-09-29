@@ -1,6 +1,6 @@
 import { fromUtf8, utf8 } from '../bytes.js'
 import { DoorbellError, secretHint } from '../errors.js'
-import { header } from '../headers.js'
+import { header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
 import { parseJsonBody, stringField } from '../json.js'
 import type { HeaderMap } from '../headers.js'
@@ -30,7 +30,7 @@ export const github: Provider = {
     return action ? `${event}.${action}` : event
   },
   async verify(ctx) {
-    const sig = header(ctx.headers, 'x-hub-signature-256')
+    const sig = sigHeader(ctx.headers, 'x-hub-signature-256', 'GitHub')
     if (!sig) {
       throw new DoorbellError('No X-Hub-Signature-256 header.', {
         code: 'missing_header',
@@ -76,7 +76,7 @@ export const meta: Provider = {
     return 'meta'
   },
   async verify(ctx) {
-    const sig = header(ctx.headers, 'x-hub-signature-256')
+    const sig = sigHeader(ctx.headers, 'x-hub-signature-256', 'Meta')
     if (!sig) {
       throw new DoorbellError('No X-Hub-Signature-256 header from Meta.', {
         code: 'missing_header',

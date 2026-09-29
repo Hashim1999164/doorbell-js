@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { doorbell } from '../src/doorbell.js'
 import { MemoryStore } from '../src/idempotency.js'
 import { preserveRawBody } from '../src/raw.js'
-import { signGitHub, signStripe } from '../src/sign.js'
+import { signGitHub, signSlack, signStripe } from '../src/sign.js'
 import { prefixRaw } from '../src/wire.js'
 import { fromUtf8, utf8 } from '../src/bytes.js'
 
@@ -194,5 +194,122 @@ describe('concurrent deliveries', () => {
     expect(a.status).toBe(200)
     expect(b.status).toBe(200)
     expect(n).toBe(1)
+  })
+})
+
+describe('clocks match the vendor SDKs', () => {
+  it('lets Stripe through with a future timestamp the way stripe-node does', async () => {
+    const payload = '{"id":"evt_future","type":"ping"}'
+    const secret = 'whsec_test_secret'
+    const ts = 1614556800 + 120
+    const header = await signStripe(payload, secret, ts)
+    const app = doorbell({
+      now: NOW,
+      stripe: { secret, onAny: async () => {} },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/stripe', {
+        method: 'POST',
+        headers: { 'stripe-signature': header },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+  })
+
+  it('rejects Slack with that same future timestamp', async () => {
+    const payload = '{"type":"event_callback","event_id":"Ev1"}'
+    const secret = 'slack_signing_secret'
+    const ts = 1614556800 + 400
+    const sig = await signSlack(payload, secret, ts)
+    const app = doorbell({
+      now: NOW,
+      slack: { secret, onAny: async () => {} },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/slack', {
+        method: 'POST',
+        headers: {
+          'x-slack-signature': sig,
+          'x-slack-request-timestamp': String(ts),
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(await res.text()).toMatch(/window|replay|future|outside/i)
+  })
+})
+
+describe('intake safety', () => {
+  it('HMAC a copy, so mutating the Express buffer afterwards still verifies', async () => {
+    const payload = '{"id":"evt_copy","type":"ping"}'
+    const secret = 'whsec_test_secret'
+    const header = await signStripe(payload, secret, TS)
+    const app = doorbell({
+      now: NOW,
+      stripe: { secret, onAny: async () => {} },
+    })
+    const buf = Buffer.from(payload)
+    const req = {
+      method: 'POST',
+      url: '/webhooks/stripe',
+      headers: { 'stripe-signature': header },
+      body: JSON.parse(payload),
+      rawBody: undefined as unknown,
+    }
+    preserveRawBody(req, null, buf)
+    buf.fill(0)
+    const res = {
+      statusCode: 0,
+      body: '',
+      status(n: number) {
+        this.statusCode = n
+        return this
+      },
+      send(b: string) {
+        this.body = b
+      },
+    }
+    await app.express(req, res)
+    expect(res.statusCode).toBe(200)
+  })
+
+  it('refuses a stripe-signature with a newline', async () => {
+    const payload = '{"id":"evt_nl","type":"ping"}'
+    const secret = 'whsec_test_secret'
+    const header = await signStripe(payload, secret, TS)
+    const app = doorbell({
+      now: NOW,
+      stripe: { secret, onAny: async () => {} },
+    })
+    const res = await app.handle({
+      method: 'POST',
+      url: 'http://shop.test/webhooks/stripe',
+      headers: new Map([['stripe-signature', `${header}\nv1=dead`]]),
+      raw: utf8(payload),
+    })
+    expect(res.status).toBe(400)
+    expect(res.body).toMatch(/newline/)
+  })
+
+  it('does not answer a Slack challenge until HMAC passes', async () => {
+    const payload = '{"type":"url_verification","challenge":"abc123"}'
+    const app = doorbell({
+      now: NOW,
+      slack: { secret: 'slack_signing_secret' },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/slack', {
+        method: 'POST',
+        headers: {
+          'x-slack-signature': 'v0=00',
+          'x-slack-request-timestamp': String(TS),
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(await res.text()).not.toContain('abc123')
   })
 })

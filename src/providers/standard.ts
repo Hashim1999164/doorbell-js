@@ -1,18 +1,18 @@
 import { standardWebhookKey } from '../bytes.js'
 import { assertFresh } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
-import { header } from '../headers.js'
+import { capParts, header, sigHeader } from '../headers.js'
 import { matchAnyBase64Mac } from '../hmac.js'
 import { parseJsonBody, stringField } from '../json.js'
 import { prefixRaw } from '../wire.js'
 import type { HeaderMap } from '../headers.js'
 import type { Provider, ProviderName, VerifyCtx } from './types.js'
 
-function makeStandard(name: ProviderName, idHeader: string, tsHeader: string, sigHeader: string): Provider {
+function makeStandard(name: ProviderName, idHeader: string, tsHeader: string, sigHeaderName: string): Provider {
   return {
     name,
     sniff(headers: HeaderMap) {
-      return Boolean(header(headers, sigHeader) && header(headers, idHeader))
+      return Boolean(header(headers, sigHeaderName) && header(headers, idHeader))
     },
     parse: parseJsonBody,
     eventId(headers) {
@@ -22,17 +22,21 @@ function makeStandard(name: ProviderName, idHeader: string, tsHeader: string, si
       return stringField(payload, 'type') ?? stringField(payload, 'event_type') ?? name
     },
     async verify(ctx: VerifyCtx) {
-      const id = header(ctx.headers, idHeader)
-      const ts = header(ctx.headers, tsHeader)
-      const sig = header(ctx.headers, sigHeader)
+      const id = sigHeader(ctx.headers, idHeader, name)
+      const ts = sigHeader(ctx.headers, tsHeader, name)
+      const sig = sigHeader(ctx.headers, sigHeaderName, name)
       if (!id || !ts || !sig) {
         throw new DoorbellError(`Missing ${name} Standard Webhooks headers.`, {
           code: 'missing_header',
-          hint: `Need ${idHeader}, ${tsHeader}, ${sigHeader}.`,
+          hint: `Need ${idHeader}, ${tsHeader}, ${sigHeaderName}.`,
         })
       }
       const timestamp = Number.parseInt(ts, 10)
-      const freshness = assertFresh(timestamp, { toleranceSec: ctx.toleranceSec, now: ctx.now })
+      const freshness = assertFresh(timestamp, {
+        toleranceSec: ctx.toleranceSec,
+        now: ctx.now,
+        future: 'reject',
+      })
       if (freshness !== 'ok') {
         throw new DoorbellError(`${name} timestamp is outside the allowed window.`, { code: 'replay' })
       }
@@ -47,13 +51,16 @@ function makeStandard(name: ProviderName, idHeader: string, tsHeader: string, si
           })
         }
       })
-      const candidates = sig.split(/[,\s]+/).flatMap((part) => {
-        const trimmed = part.trim()
-        if (!trimmed) return []
-        if (trimmed.startsWith('v1,')) return [trimmed.slice(3)]
-        if (trimmed.startsWith('v1=')) return [trimmed.slice(3)]
-        return [trimmed]
-      })
+      const candidates = capParts(
+        sig.split(/[,\s]+/).flatMap((part) => {
+          const trimmed = part.trim()
+          if (!trimmed) return []
+          if (trimmed.startsWith('v1,')) return [trimmed.slice(3)]
+          if (trimmed.startsWith('v1=')) return [trimmed.slice(3)]
+          return [trimmed]
+        }),
+        name,
+      )
       const ok = await matchAnyBase64Mac(keys, toSign, candidates)
       if (!ok) {
         throw new DoorbellError(`${name} signature did not match.`, {

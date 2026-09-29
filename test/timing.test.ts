@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseHex, toHex, utf8 } from '../src/bytes.js'
-import { timingSafeEqual, timingSafeEqualHex } from '../src/timing.js'
+import { timingSafeEqual, timingSafeEqualHex, timingSafeEqualText } from '../src/timing.js'
 
 describe('timingSafeEqual', () => {
   it('accepts equal bytes', () => {
@@ -21,5 +21,18 @@ describe('timingSafeEqual', () => {
   it('roundtrips hex', () => {
     const bytes = utf8('doorbell')
     expect(parseHex(toHex(bytes))).toEqual(bytes)
+  })
+
+  it('does not early return on the first bad nibble', () => {
+    expect(parseHex('zz')).toBeNull()
+    expect(parseHex('0a0')).toBeNull()
+    expect(parseHex('0A0B')).toEqual(parseHex('0a0b'))
+  })
+})
+
+describe('timingSafeEqualText', () => {
+  it('matches Meta tokens without ===', () => {
+    expect(timingSafeEqualText('my-token', 'my-token')).toBe(true)
+    expect(timingSafeEqualText('my-token', 'nope')).toBe(false)
   })
 })

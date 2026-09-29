@@ -140,6 +140,27 @@ describe('meta handshake', () => {
   })
 })
 
+describe('linear clock', () => {
+  it('rejects a signed Linear body with an old webhookTimestamp', async () => {
+    const payload = '{"action":"create","type":"Issue","webhookTimestamp":1000}'
+    const secret = 'linear_webhook_secret'
+    const sig = await signLinear(payload, secret)
+    const app = doorbell({
+      now: NOW,
+      linear: { secret, onAny: async () => {} },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/linear', {
+        method: 'POST',
+        headers: { 'linear-signature': sig },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(await res.text()).toMatch(/webhookTimestamp|window/)
+  })
+})
+
 describe('idempotency', () => {
   it('lets a failed handler run again', async () => {
     const store = new MemoryStore(NOW)

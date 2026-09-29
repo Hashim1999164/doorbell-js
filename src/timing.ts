@@ -23,6 +23,10 @@ export function timingSafeEqualHex(expectedHex: string, providedHex: string): bo
   return timingSafeEqual(expected, provided)
 }
 
+export function timingSafeEqualText(a: string, b: string): boolean {
+  return timingSafeEqual(utf8(a), utf8(b))
+}
+
 /**
  * Compare every expected digest with every provided digest.
  * Invalid / wrong-length candidates still get a dummy compare so we do not

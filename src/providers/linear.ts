@@ -1,7 +1,8 @@
+import { assertFresh } from '../clock.js'
 import { DoorbellError } from '../errors.js'
-import { header } from '../headers.js'
+import { header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
-import { parseJsonBody, stringField } from '../json.js'
+import { parseJsonBody, stringField, unixField } from '../json.js'
 import type { HeaderMap } from '../headers.js'
 import type { Provider } from './types.js'
 
@@ -26,7 +27,7 @@ export const linear: Provider = {
     return type ?? 'linear'
   },
   async verify(ctx) {
-    const sig = header(ctx.headers, 'linear-signature')
+    const sig = sigHeader(ctx.headers, 'linear-signature', 'Linear')
     if (!sig) {
       throw new DoorbellError('No Linear-Signature header.', { code: 'missing_header' })
     }
@@ -34,6 +35,24 @@ export const linear: Provider = {
     if (!ok) {
       throw new DoorbellError('Linear signature did not match.', { code: 'bad_signature' })
     }
-    return { timestampSec: undefined }
+    let timestampSec: number | undefined
+    try {
+      timestampSec = unixField(parseJsonBody(ctx.raw), 'webhookTimestamp')
+    } catch {
+      timestampSec = undefined
+    }
+    if (timestampSec != null) {
+      const freshness = assertFresh(timestampSec, {
+        toleranceSec: ctx.toleranceSec,
+        now: ctx.now,
+        future: 'reject',
+      })
+      if (freshness !== 'ok') {
+        throw new DoorbellError('Linear webhookTimestamp is outside the allowed window.', {
+          code: 'replay',
+        })
+      }
+    }
+    return { timestampSec }
   },
 }

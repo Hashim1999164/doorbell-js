@@ -23,6 +23,12 @@ export function concatBytes(chunks: Uint8Array[]): Uint8Array {
   return out
 }
 
+export function copyBytes(input: Uint8Array): Uint8Array {
+  const out = new Uint8Array(input.byteLength)
+  out.set(input)
+  return out
+}
+
 export function asRawBody(input: unknown): Uint8Array {
   if (input == null) {
     throw new DoorbellError('No webhook body.', {
@@ -30,23 +36,34 @@ export function asRawBody(input: unknown): Uint8Array {
       hint: 'The request had nothing to sign. If this is Express, you are missing express.raw() on this route.',
     })
   }
-  if (input instanceof Uint8Array) return input
+  if (input instanceof Uint8Array) return copyBytes(input)
   if (typeof Buffer !== 'undefined' && Buffer.isBuffer(input)) {
-    return new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+    return copyBytes(new Uint8Array(input.buffer, input.byteOffset, input.byteLength))
   }
   if (typeof input === 'string') return utf8(input)
   throw parsedBodyError()
 }
 
+function nibble(code: number): number {
+  if (code >= 48 && code <= 57) return code - 48
+  const lower = code | 32
+  if (lower >= 97 && lower <= 102) return lower - 87
+  return 16
+}
+
 export function parseHex(hex: string): Uint8Array | null {
-  const clean = hex.trim().toLowerCase()
-  if (clean.length === 0 || clean.length % 2 !== 0) return null
-  const out = new Uint8Array(clean.length / 2)
-  for (let i = 0; i < out.length; i++) {
-    const pair = clean.slice(i * 2, i * 2 + 2)
-    if (!/[0-9a-f]{2}/.test(pair)) return null
-    out[i] = Number.parseInt(pair, 16)
+  const n = hex.length
+  if (n === 0) return null
+  let invalid = n & 1
+  const out = new Uint8Array(n >> 1)
+  for (let i = 0; i + 1 < n; i += 2) {
+    const hi = nibble(hex.charCodeAt(i))
+    const lo = nibble(hex.charCodeAt(i + 1))
+    invalid |= hi > 15 ? 1 : 0
+    invalid |= lo > 15 ? 1 : 0
+    out[i >> 1] = ((hi & 15) << 4) | (lo & 15)
   }
+  if (invalid) return null
   return out
 }
 
@@ -62,7 +79,7 @@ export function parseBase64(value: string): Uint8Array | null {
     if (typeof Buffer !== 'undefined') {
       const buf = Buffer.from(clean, 'base64')
       if (buf.byteLength === 0 && clean.length > 0) return null
-      return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
+      return copyBytes(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength))
     }
     const bin = atob(clean)
     const out = new Uint8Array(bin.length)

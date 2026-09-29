@@ -1,6 +1,6 @@
 import { assertFresh } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
-import { header } from '../headers.js'
+import { capParts, header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
 import { parseJsonBody } from '../json.js'
 import { prefixRaw } from '../wire.js'
@@ -10,7 +10,7 @@ import type { Provider, VerifyCtx } from './types.js'
 function parseStripeHeader(value: string): { timestamp: number; signatures: string[] } {
   let timestamp = -1
   const signatures: string[] = []
-  for (const part of value.split(',')) {
+  for (const part of capParts(value.split(','), 'Stripe')) {
     const eq = part.indexOf('=')
     if (eq === -1) continue
     const k = part.slice(0, eq).trim()
@@ -18,6 +18,7 @@ function parseStripeHeader(value: string): { timestamp: number; signatures: stri
     if (k === 't') timestamp = Number.parseInt(v, 10)
     if (k === 'v1') signatures.push(v)
   }
+  capParts(signatures, 'Stripe')
   return { timestamp, signatures }
 }
 
@@ -42,31 +43,30 @@ export const stripe: Provider = {
     return 'unknown'
   },
   async verify(ctx) {
-    const sigHeader = header(ctx.headers, 'stripe-signature')
-    if (!sigHeader) {
+    const sigHeaderValue = sigHeader(ctx.headers, 'stripe-signature', 'Stripe')
+    if (!sigHeaderValue) {
       throw new DoorbellError('No stripe-signature header.', {
         code: 'missing_header',
         hint: 'Stripe always sends Stripe-Signature. If you do not see it, a proxy stripped it.',
       })
     }
-    const { timestamp, signatures } = parseStripeHeader(sigHeader)
+    const { timestamp, signatures } = parseStripeHeader(sigHeaderValue)
     if (timestamp < 0 || signatures.length === 0) {
       throw new DoorbellError('Could not read timestamp and v1 signatures from Stripe-Signature.', {
         code: 'bad_header',
         hint: 'The header looks like t=123,v1=hex. If you pasted a test string, check commas.',
       })
     }
-    const freshness = assertFresh(timestamp, { toleranceSec: ctx.toleranceSec, now: ctx.now })
-    if (freshness === 'too_old' || freshness === 'too_new' || freshness === 'bad') {
-      throw new DoorbellError(
-        freshness === 'too_new'
-          ? 'Stripe timestamp is in the future.'
-          : 'Stripe timestamp is too old.',
-        {
-          code: 'replay',
-          hint: 'Default window is 5 minutes. If your server clock is wrong, fix NTP. Do not disable this in production.',
-        },
-      )
+    const freshness = assertFresh(timestamp, {
+      toleranceSec: ctx.toleranceSec,
+      now: ctx.now,
+      future: 'allow',
+    })
+    if (freshness === 'too_old' || freshness === 'bad') {
+      throw new DoorbellError('Stripe timestamp is too old.', {
+        code: 'replay',
+        hint: 'Default window is 5 minutes. Stripe-node only rejects old events, not future ones. If your server clock is wrong, fix NTP.',
+      })
     }
     const signed = prefixRaw(`${timestamp}.`, ctx.raw)
     const ok = await matchAnyHexMac(ctx.secrets, signed, signatures)

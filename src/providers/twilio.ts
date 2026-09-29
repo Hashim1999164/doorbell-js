@@ -1,6 +1,6 @@
 import { utf8 } from '../bytes.js'
 import { DoorbellError, secretHint } from '../errors.js'
-import { header } from '../headers.js'
+import { header, sigHeader } from '../headers.js'
 import { hmacSha1, timingSafeEqual } from '../hmac.js'
 import { parseBase64 } from '../bytes.js'
 import type { HeaderMap } from '../headers.js'
@@ -43,7 +43,7 @@ export const twilio: Provider = {
     return 'twilio'
   },
   async verify(ctx) {
-    const sig = header(ctx.headers, 'x-twilio-signature')
+    const sig = sigHeader(ctx.headers, 'x-twilio-signature', 'Twilio')
     if (!sig) {
       throw new DoorbellError('No X-Twilio-Signature header.', { code: 'missing_header' })
     }

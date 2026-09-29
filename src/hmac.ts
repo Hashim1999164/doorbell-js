@@ -1,5 +1,5 @@
 import { parseBase64, parseHex, toBase64, toHex } from './bytes.js'
-import { matchAnyDigest, timingSafeEqual, timingSafeEqualHex } from './timing.js'
+import { matchAnyDigest } from './timing.js'
 
 export async function hmacSha256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
   return hmac(key, data, 'SHA-256')
@@ -95,4 +95,4 @@ export function decodeHexMac(value: string): Uint8Array | null {
   return parseHex(value)
 }
 
-export { timingSafeEqual, timingSafeEqualHex }
+export { timingSafeEqual, timingSafeEqualHex, timingSafeEqualText } from './timing.js'

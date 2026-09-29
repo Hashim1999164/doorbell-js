@@ -6,7 +6,7 @@ export type {
   ProviderConfig,
   WebhookHandler,
 } from './doorbell.js'
-export { preserveRawBody, rawFromNodeRequest } from './raw.js'
+export { captureFastifyBuffer, preserveRawBody, rawFromNodeRequest } from './raw.js'
 export { MemoryStore } from './idempotency.js'
 export type { IdempotencyStore } from './idempotency.js'
 export type { ProviderName, VerifiedEvent } from './providers/types.js'

@@ -1,6 +1,6 @@
 import { assertFresh } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
-import { header } from '../headers.js'
+import { header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
 import { parseJsonBody, stringField } from '../json.js'
 import { prefixRaw } from '../wire.js'
@@ -27,8 +27,8 @@ export const slack: Provider = {
     return stringField(payload, 'type') ?? 'unknown'
   },
   async verify(ctx) {
-    const sig = header(ctx.headers, 'x-slack-signature')
-    const ts = header(ctx.headers, 'x-slack-request-timestamp')
+    const sig = sigHeader(ctx.headers, 'x-slack-signature', 'Slack')
+    const ts = sigHeader(ctx.headers, 'x-slack-request-timestamp', 'Slack')
     if (!sig || !ts) {
       throw new DoorbellError('Missing Slack signature headers.', {
         code: 'missing_header',
@@ -36,11 +36,15 @@ export const slack: Provider = {
       })
     }
     const timestamp = Number.parseInt(ts, 10)
-    const freshness = assertFresh(timestamp, { toleranceSec: ctx.toleranceSec, now: ctx.now })
+    const freshness = assertFresh(timestamp, {
+      toleranceSec: ctx.toleranceSec,
+      now: ctx.now,
+      future: 'reject',
+    })
     if (freshness !== 'ok') {
       throw new DoorbellError('Slack timestamp is outside the allowed window.', {
         code: 'replay',
-        hint: 'Slack asks for 5 minutes. Replay protection is the point.',
+        hint: 'Slack asks for 5 minutes either side. A timestamp from the future is how you replay it later.',
       })
     }
     const hex = sig.startsWith('v0=') ? sig.slice(3) : sig

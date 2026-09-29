@@ -1,4 +1,4 @@
-import { secretBytesUtf8 } from './bytes.js'
+import { copyBytes, secretBytesUtf8 } from './bytes.js'
 import { DoorbellError, missingSecretError } from './errors.js'
 import { handshake } from './handshake.js'
 import { headerMap } from './headers.js'
@@ -136,7 +136,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
   const handle = async (req: NormalizedRequest): Promise<NormalizedResponse> => {
     const method = (req.method || 'POST').toUpperCase()
     const headers = req.headers
-    const raw = req.raw
+    const raw = copyBytes(req.raw)
 
     if (method === 'GET') {
       const metaCfg = config.meta
@@ -269,7 +269,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
   }
 
   const fetchHandler = async (req: Request): Promise<Response> => {
-    const raw = new Uint8Array(await req.arrayBuffer())
+    const raw = copyBytes(new Uint8Array(await req.arrayBuffer()))
     const result = await guarded({
       method: req.method,
       url: req.url,
