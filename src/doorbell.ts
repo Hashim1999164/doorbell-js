@@ -1,11 +1,11 @@
 import { copyBytes, secretBytesUtf8 } from './bytes.js'
-import { DoorbellError, missingSecretError } from './errors.js'
+import { DoorbellError, missingSecretError, tooLargeError } from './errors.js'
 import { handshake } from './handshake.js'
 import { headerMap } from './headers.js'
 import { MemoryStore, type IdempotencyStore } from './idempotency.js'
 import { stringField } from './json.js'
 import { providerFromPath, providers, sniffProvider } from './providers/index.js'
-import { rawFromNodeRequest } from './raw.js'
+import { rawFromNodeRequest, readRequestBodyCapped } from './raw.js'
 import { lintSecret } from './secrets.js'
 import type { ProviderName, VerifiedEvent } from './providers/types.js'
 import type { HeaderMap } from './headers.js'
@@ -127,15 +127,23 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     for (const secret of secrets) lintSecret(name, secret)
   }
 
-  const store = config.store ?? new MemoryStore(config.now ?? Date.now)
+  const handlerTimeoutMs = config.handlerTimeoutMs
+  const inflightHoldMs = Math.max(
+    60_000,
+    (handlerTimeoutMs && handlerTimeoutMs > 0 ? handlerTimeoutMs : 0) + 60_000,
+  )
+  const store = config.store ?? new MemoryStore(config.now ?? Date.now, inflightHoldMs)
   const ttl = config.idempotencyTtlMs ?? 24 * 60 * 60 * 1000
   const unhandled = config.unhandled ?? 'ignore'
   const maxBodyBytes = config.maxBodyBytes ?? 5_000_000
-  const handlerTimeoutMs = config.handlerTimeoutMs
 
   const handle = async (req: NormalizedRequest): Promise<NormalizedResponse> => {
     const method = (req.method || 'POST').toUpperCase()
     const headers = req.headers
+
+    if (maxBodyBytes > 0 && req.raw.byteLength > maxBodyBytes) {
+      throw tooLargeError(req.raw.byteLength, maxBodyBytes)
+    }
     const raw = copyBytes(req.raw)
 
     if (method === 'GET') {
@@ -149,14 +157,6 @@ export function doorbell(config: DoorbellConfig): Doorbell {
 
     if (method !== 'POST' && method !== 'PUT') {
       return text(405, 'Use POST.')
-    }
-
-    if (maxBodyBytes > 0 && raw.byteLength > maxBodyBytes) {
-      throw new DoorbellError(`Body is ${raw.byteLength} bytes. Limit is ${maxBodyBytes}.`, {
-        code: 'too_large',
-        status: 413,
-        hint: 'Raise maxBodyBytes if you really take huge GitHub push payloads. HMAC on a 50MB body is how people melt a box.',
-      })
     }
 
     let name = providerFromPath(req.url, allowed) ?? sniffProvider(headers, allowed)
@@ -238,21 +238,32 @@ export function doorbell(config: DoorbellConfig): Doorbell {
       return json(200, { ok: true, duplicate: true, id: event.id })
     }
 
+    const work = Promise.resolve(fn(event)).then(() => undefined)
     try {
-      await runHandler(fn, event, handlerTimeoutMs, ac)
+      await awaitHandler(work, handlerTimeoutMs, ac)
       await store.commit(key, ttl)
       return json(200, { ok: true, id: event.id, type: event.type })
     } catch (err) {
       ac.abort()
+      if (err instanceof DoorbellError && err.code === 'timeout') {
+        // Keep the inflight slot until this work actually finishes.
+        // Dropping here lets a Stripe retry run while the first handler is still going.
+        void work.then(
+          () => store.commit(key, ttl).catch(() => undefined),
+          () => store.drop(key).catch(() => undefined),
+        )
+        config.onError?.(err, event)
+        return text(err.status, err.toText())
+      }
       await store.drop(key)
       config.onError?.(err, event)
-      if (err instanceof DoorbellError && err.code === 'timeout') throw err
-      throw new DoorbellError('Handler threw. Told the sender to retry.', {
+      const wrapped = new DoorbellError('Handler threw. Told the sender to retry.', {
         code: 'handler',
         status: 500,
         cause: err,
         hint: err instanceof Error ? err.message : String(err),
       })
+      return text(wrapped.status, wrapped.toText())
     }
   }
 
@@ -270,7 +281,18 @@ export function doorbell(config: DoorbellConfig): Doorbell {
   }
 
   const fetchHandler = async (req: Request): Promise<Response> => {
-    const raw = copyBytes(new Uint8Array(await req.arrayBuffer()))
+    let raw: Uint8Array
+    try {
+      raw = await readRequestBodyCapped(req, maxBodyBytes)
+    } catch (err) {
+      if (err instanceof DoorbellError) {
+        return new Response(err.toText(), {
+          status: err.status,
+          headers: { 'content-type': 'text/plain; charset=utf-8' },
+        })
+      }
+      throw err
+    }
     const result = await guarded({
       method: req.method,
       url: req.url,
@@ -345,13 +367,11 @@ function pickHandler(cfg: ProviderConfig, type: string): WebhookHandler | undefi
   return undefined
 }
 
-async function runHandler(
-  fn: WebhookHandler,
-  event: VerifiedEvent,
+async function awaitHandler(
+  work: Promise<void>,
   timeoutMs: number | undefined,
   ac: AbortController,
 ): Promise<void> {
-  const work = Promise.resolve(fn(event))
   if (timeoutMs == null || timeoutMs <= 0) {
     await work
     return

@@ -20,6 +20,14 @@ export class DoorbellError extends Error {
   }
 }
 
+export function tooLargeError(got: number, limit: number): DoorbellError {
+  return new DoorbellError(`Body is ${got} bytes. Limit is ${limit}.`, {
+    code: 'too_large',
+    status: 413,
+    hint: 'Raise maxBodyBytes if you really take huge GitHub push payloads. HMAC on a 50MB body is how people melt a box.',
+  })
+}
+
 export function parsedBodyError(): DoorbellError {
   return new DoorbellError(
     'This body was already parsed. Signature checks need the raw bytes.',

@@ -1,4 +1,5 @@
-import { asRawBody, copyBytes } from './bytes.js'
+import { asRawBody, concatBytes, copyBytes } from './bytes.js'
+import { tooLargeError } from './errors.js'
 
 type RawCarrier = {
   rawBody?: unknown
@@ -38,4 +39,33 @@ export function captureFastifyBuffer(
 export function rawFromNodeRequest(req: RawCarrier): Uint8Array {
   if (req.rawBody != null) return asRawBody(req.rawBody)
   return asRawBody(req.body)
+}
+
+/** Stop reading once the body is over the cap. Do not buffer 50MB then return 413. */
+export async function readRequestBodyCapped(req: Request, maxBodyBytes: number): Promise<Uint8Array> {
+  const declared = req.headers.get('content-length')
+  if (maxBodyBytes > 0 && declared) {
+    const n = Number(declared)
+    if (Number.isFinite(n) && n > maxBodyBytes) throw tooLargeError(n, maxBodyBytes)
+  }
+  const reader = req.body?.getReader()
+  if (!reader) return new Uint8Array()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (!value) continue
+    total += value.byteLength
+    if (maxBodyBytes > 0 && total > maxBodyBytes) {
+      try {
+        await reader.cancel()
+      } catch {
+        // already over the cap
+      }
+      throw tooLargeError(total, maxBodyBytes)
+    }
+    chunks.push(value)
+  }
+  return concatBytes(chunks)
 }

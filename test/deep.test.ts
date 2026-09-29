@@ -126,6 +126,71 @@ describe('limits', () => {
     expect(res.status).toBe(500)
     expect(await res.text()).toContain('too long')
   })
+
+  it('does not double-run when a retry lands while a timed out handler is still working', async () => {
+    let ran = 0
+    const payload = '{"id":"evt_slow2","type":"ping"}'
+    const secret = 'whsec_test_secret'
+    const header = await signStripe(payload, secret, TS)
+    const app = doorbell({
+      now: NOW,
+      handlerTimeoutMs: 25,
+      stripe: {
+        secret,
+        onAny: async () => {
+          ran += 1
+          await new Promise((resolve) => setTimeout(resolve, 80))
+        },
+      },
+    })
+    const send = () =>
+      app(
+        new Request('http://shop.test/webhooks/stripe', {
+          method: 'POST',
+          headers: { 'stripe-signature': header },
+          body: payload,
+        }),
+      )
+    const first = await send()
+    expect(first.status).toBe(500)
+    const second = await send()
+    expect(ran).toBe(1)
+    expect(second.status).toBe(200)
+    expect(await second.json()).toMatchObject({ duplicate: true })
+  })
+
+  it('lets a retry run after a timed out handler later throws', async () => {
+    let ran = 0
+    const payload = '{"id":"evt_slow3","type":"ping"}'
+    const secret = 'whsec_test_secret'
+    const header = await signStripe(payload, secret, TS)
+    const app = doorbell({
+      now: NOW,
+      handlerTimeoutMs: 20,
+      stripe: {
+        secret,
+        onAny: async () => {
+          ran += 1
+          if (ran === 1) {
+            await new Promise((resolve) => setTimeout(resolve, 50))
+            throw new Error('late')
+          }
+        },
+      },
+    })
+    const send = () =>
+      app(
+        new Request('http://shop.test/webhooks/stripe', {
+          method: 'POST',
+          headers: { 'stripe-signature': header },
+          body: payload,
+        }),
+      )
+    expect((await send()).status).toBe(500)
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect((await send()).status).toBe(200)
+    expect(ran).toBe(2)
+  })
 })
 
 describe('express rawBody', () => {
@@ -356,6 +421,14 @@ describe('inflight claim', () => {
     const store = new MemoryStore(() => t)
     expect(await store.claim('k')).toBe('run')
     t += 61_000
+    expect(await store.claim('k')).toBe('run')
+  })
+
+  it('holds inflight for a custom window', async () => {
+    let t = 1000
+    const store = new MemoryStore(() => t, 200)
+    expect(await store.claim('k')).toBe('run')
+    t += 201
     expect(await store.claim('k')).toBe('run')
   })
 })

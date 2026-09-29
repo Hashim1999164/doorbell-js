@@ -24,6 +24,10 @@ function jsonReviver(key: string, value: unknown): unknown {
   return value
 }
 
+export function hasOwn(payload: unknown, key: string): boolean {
+  return Boolean(payload && typeof payload === 'object' && Object.prototype.hasOwnProperty.call(payload, key))
+}
+
 function own(payload: object, key: string): unknown {
   if (!Object.prototype.hasOwnProperty.call(payload, key)) return undefined
   return (payload as Record<string, unknown>)[key]

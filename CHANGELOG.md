@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.0
+
+A handler timeout no longer drops the inflight claim while that work is still running. Stripe retry used to start a second handler. Now the slot stays until the first work settles: success commits (retry is a duplicate), throw drops (retry can run). Inflight hold is at least one minute, or `handlerTimeoutMs` plus one minute.
+
+The fetch path stops reading at `maxBodyBytes`. The cap is checked before copying the buffer.
+
+GitHub ping, push, issues, pull_request, and a few other common events have to match the signed JSON. Shopify `orders/`, `checkouts/`, and `products/` topics do the same. Unknown events stay fail-open after HMAC.
+
+Unix timestamps have to be a digit string. Base64 signatures that Node would still decode with junk in them are rejected.
+
 ## 1.4.0
 
 GitHub, Shopify, and Meta HMAC the body only. Delivery id, webhook-id, and triggered-at are not in that HMAC, so they are not a clock and not an idempotency key. Those providers key retries on a fingerprint of the raw bytes.

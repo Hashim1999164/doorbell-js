@@ -196,16 +196,17 @@ describe('github', () => {
     expect(await res.json()).toMatchObject({ ping: true })
   })
 
-  it('answers ping from the signed zen field even if X-GitHub-Event is something else', async () => {
+  it('refuses a ping body labelled issues because that header is unsigned', async () => {
     const payload = '{"zen":"Speak like a human."}'
     const secret = 'github_webhook_secret'
     const sig = await signGitHub(payload, secret)
+    let ran = false
     const app = doorbell({
       github: {
         secret,
         on: {
           'issues.opened': async () => {
-            throw new Error('unsigned event header must not dispatch a ping body')
+            ran = true
           },
         },
       },
@@ -220,11 +221,12 @@ describe('github', () => {
         body: payload,
       }),
     )
-    expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ ping: true })
+    expect(res.status).toBe(400)
+    expect(ran).toBe(false)
+    expect(await res.text()).toContain('does not match')
   })
 
-  it('does not treat a signed push as ping just because X-GitHub-Event says ping', async () => {
+  it('refuses a signed push labelled as ping', async () => {
     const payload = '{"ref":"refs/heads/main"}'
     const secret = 'github_webhook_secret'
     const sig = await signGitHub(payload, secret)
@@ -247,9 +249,66 @@ describe('github', () => {
         body: payload,
       }),
     )
+    expect(res.status).toBe(400)
+    expect(ran).toBe(false)
+  })
+
+  it('runs issues.opened only when the signed body has an issue', async () => {
+    const payload = '{"action":"opened","issue":{"id":1}}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    let ran = false
+    const app = doorbell({
+      github: {
+        secret,
+        on: {
+          'issues.opened': async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'issues',
+          'x-hub-signature-256': sig,
+        },
+        body: payload,
+      }),
+    )
     expect(res.status).toBe(200)
     expect(ran).toBe(true)
-    expect(await res.json()).not.toMatchObject({ ping: true })
+  })
+
+  it('refuses a push body labelled issues', async () => {
+    const payload = '{"ref":"refs/heads/main"}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    let ran = false
+    const app = doorbell({
+      github: {
+        secret,
+        on: {
+          issues: async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'issues',
+          'x-hub-signature-256': sig,
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(ran).toBe(false)
   })
 })
 

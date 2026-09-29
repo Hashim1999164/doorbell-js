@@ -3,7 +3,7 @@ import { DoorbellError, secretHint } from '../errors.js'
 import { bodyFingerprint } from '../hash.js'
 import { header, sigHeader } from '../headers.js'
 import { matchAnyBase64Mac } from '../hmac.js'
-import { parseJsonBody } from '../json.js'
+import { hasOwn, parseJsonBody } from '../json.js'
 import type { HeaderMap } from '../headers.js'
 import type { Provider } from './types.js'
 
@@ -35,6 +35,26 @@ export const shopify: Provider = {
         hint: secretHint('shopify'),
       })
     }
+    const payload = parseJsonBody(ctx.raw)
+    const topic = header(ctx.headers, 'x-shopify-topic') ?? ''
+    if (!shopifyTopicMatchesBody(topic, payload)) {
+      throw new DoorbellError('X-Shopify-Topic does not match the signed body.', {
+        code: 'bad_header',
+        hint: 'Shopify does not HMAC that header. An order body labelled products/create will not run on[products/create].',
+      })
+    }
     return { timestampSec: undefined }
   },
+}
+
+export function shopifyTopicMatchesBody(topic: string, payload: unknown): boolean {
+  const t = topic.trim().toLowerCase()
+  if (!t) return false
+  if (t.startsWith('orders/') || t.startsWith('checkouts/')) {
+    return hasOwn(payload, 'line_items') || hasOwn(payload, 'order_number') || hasOwn(payload, 'checkout_id')
+  }
+  if (t.startsWith('products/')) {
+    return hasOwn(payload, 'variants') || hasOwn(payload, 'product_type')
+  }
+  return true
 }

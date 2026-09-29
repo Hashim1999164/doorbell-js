@@ -75,15 +75,25 @@ export function toHex(bytes: Uint8Array): string {
 
 export function parseBase64(value: string): Uint8Array | null {
   try {
-    const clean = value.trim()
+    const compact = value.trim().replace(/\s+/g, '')
+    if (compact.length === 0) return null
+    const pad = compact.match(/=+$/)
+    if (pad && pad[0].length > 2) return null
+    const core = pad ? compact.slice(0, compact.length - pad[0].length) : compact
+    if (core.length === 0 || !/^[A-Za-z0-9+/]+$/.test(core)) return null
     if (typeof Buffer !== 'undefined') {
-      const buf = Buffer.from(clean, 'base64')
-      if (buf.byteLength === 0 && clean.length > 0) return null
-      return copyBytes(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength))
+      const buf = Buffer.from(compact, 'base64')
+      if (buf.byteLength === 0) return null
+      const bytes = copyBytes(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength))
+      const again = Buffer.from(bytes).toString('base64').replace(/=+$/, '')
+      if (again !== core) return null
+      return bytes
     }
-    const bin = atob(clean)
+    const bin = atob(compact)
     const out = new Uint8Array(bin.length)
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+    const again = toBase64(out).replace(/=+$/, '')
+    if (again !== core) return null
     return out
   } catch {
     return null

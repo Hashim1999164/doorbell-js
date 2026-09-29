@@ -1,5 +1,5 @@
 import { burnHex } from '../burn.js'
-import { assertFresh } from '../clock.js'
+import { assertFresh, parseUnixSec } from '../clock.js'
 import { DoorbellError } from '../errors.js'
 import { capParts, header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
@@ -46,11 +46,14 @@ export const paddle: Provider = {
       await burnHex(ctx.secrets, ctx.raw)
       throw new DoorbellError('Could not read ts and h1 from Paddle-Signature.', { code: 'bad_header' })
     }
-    const timestamp = Number.parseInt(parsed.ts, 10)
     const signed = prefixRaw(`${parsed.ts}:`, ctx.raw)
     const ok = await matchAnyHexMac(ctx.secrets, signed, parsed.h1)
     if (!ok) {
       throw new DoorbellError('Paddle signature did not match.', { code: 'bad_signature' })
+    }
+    const timestamp = parseUnixSec(parsed.ts)
+    if (timestamp == null) {
+      throw new DoorbellError('Paddle timestamp is not a unix second.', { code: 'bad_header' })
     }
     const freshness = assertFresh(timestamp, {
       toleranceSec: ctx.toleranceSec,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { parseHex, toHex, utf8 } from '../src/bytes.js'
+import { parseBase64, parseHex, toHex, utf8 } from '../src/bytes.js'
+import { parseUnixSec } from '../src/clock.js'
 import { timingSafeEqual, timingSafeEqualHex, timingSafeEqualText } from '../src/timing.js'
 
 describe('timingSafeEqual', () => {
@@ -34,5 +35,20 @@ describe('timingSafeEqualText', () => {
   it('matches Meta tokens without ===', () => {
     expect(timingSafeEqualText('my-token', 'my-token')).toBe(true)
     expect(timingSafeEqualText('my-token', 'nope')).toBe(false)
+  })
+})
+
+describe('parseBase64', () => {
+  it('rejects junk that Node Buffer.from would still decode', () => {
+    expect(parseBase64('SGVsbG8!')).toBeNull()
+    expect(parseBase64('SGVsbG8=')).toEqual(utf8('Hello'))
+  })
+})
+
+describe('parseUnixSec', () => {
+  it('rejects leading zeros and trailing junk', () => {
+    expect(parseUnixSec('1614556800')).toBe(1614556800)
+    expect(parseUnixSec('01614556800')).toBeUndefined()
+    expect(parseUnixSec('1614556800abc')).toBeUndefined()
   })
 })

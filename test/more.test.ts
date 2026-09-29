@@ -10,7 +10,7 @@ const NOW = () => 1_614_556_800_000
 
 describe('shopify linear paddle', () => {
   it('verifies shopify base64 hmac', async () => {
-    const payload = '{"id":1,"name":"Order"}'
+    const payload = '{"id":1,"name":"Order","line_items":[]}'
     const secret = 'shopify_shared_secret'
     const hmac = await signShopify(payload, secret)
     let topic = ''
@@ -38,7 +38,7 @@ describe('shopify linear paddle', () => {
   })
 
   it('does not clock Shopify on X-Shopify-Triggered-At because that header is not signed', async () => {
-    const payload = '{"id":1,"name":"Order"}'
+    const payload = '{"id":1,"name":"Order","line_items":[]}'
     const secret = 'shopify_shared_secret'
     const hmac = await signShopify(payload, secret)
     const app = doorbell({
@@ -62,7 +62,7 @@ describe('shopify linear paddle', () => {
   it('keys Shopify idempotency on the body, not the unsigned webhook-id header', async () => {
     const store = new MemoryStore(NOW)
     let n = 0
-    const payload = '{"id":1,"name":"Order"}'
+    const payload = '{"id":1,"name":"Order","line_items":[]}'
     const secret = 'shopify_shared_secret'
     const hmac = await signShopify(payload, secret)
     const app = doorbell({
@@ -91,6 +91,35 @@ describe('shopify linear paddle', () => {
     expect(second.status).toBe(200)
     expect(await second.json()).toMatchObject({ duplicate: true })
     expect(n).toBe(1)
+  })
+
+  it('refuses an order body labelled products/create', async () => {
+    const payload = '{"id":1,"name":"Order","line_items":[]}'
+    const secret = 'shopify_shared_secret'
+    const hmac = await signShopify(payload, secret)
+    let ran = false
+    const app = doorbell({
+      shopify: {
+        secret,
+        on: {
+          'products/create': async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/shopify', {
+        method: 'POST',
+        headers: {
+          'x-shopify-hmac-sha256': hmac,
+          'x-shopify-topic': 'products/create',
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(ran).toBe(false)
   })
 
   it('verifies linear hex hmac', async () => {

@@ -3,7 +3,7 @@ import { DoorbellError, secretHint } from '../errors.js'
 import { bodyFingerprint } from '../hash.js'
 import { header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
-import { parseJsonBody, stringField } from '../json.js'
+import { hasOwn, parseJsonBody, stringField } from '../json.js'
 import type { HeaderMap } from '../headers.js'
 import type { Provider } from './types.js'
 
@@ -57,8 +57,57 @@ export const github: Provider = {
         ].join('\n'),
       })
     }
+    const payload = parseJsonBody(ctx.raw)
+    const eventName = header(ctx.headers, 'x-github-event') ?? ''
+    if (!githubEventMatchesBody(eventName, payload)) {
+      throw new DoorbellError('X-GitHub-Event does not match the signed body.', {
+        code: 'bad_header',
+        hint: 'GitHub does not HMAC that header. A captured push labelled issues will not run on[issues].',
+      })
+    }
     return { timestampSec: undefined }
   },
+}
+
+/** Known GitHub events have a body shape. Unknown events stay fail-open after HMAC. */
+export function githubEventMatchesBody(eventName: string, payload: unknown): boolean {
+  const event = eventName.trim().toLowerCase()
+  if (!event) return false
+  switch (event) {
+    case 'ping':
+      return hasOwn(payload, 'zen')
+    case 'push':
+      return hasOwn(payload, 'ref') || hasOwn(payload, 'commits')
+    case 'issues':
+      return hasOwn(payload, 'issue') && !hasOwn(payload, 'comment')
+    case 'issue_comment':
+      return hasOwn(payload, 'issue') && hasOwn(payload, 'comment')
+    case 'pull_request':
+      return hasOwn(payload, 'pull_request') && !hasOwn(payload, 'review')
+    case 'pull_request_review':
+      return hasOwn(payload, 'review') && hasOwn(payload, 'pull_request')
+    case 'pull_request_review_comment':
+      return hasOwn(payload, 'comment') && hasOwn(payload, 'pull_request')
+    case 'release':
+      return hasOwn(payload, 'release')
+    case 'workflow_run':
+      return hasOwn(payload, 'workflow_run')
+    case 'workflow_job':
+      return hasOwn(payload, 'workflow_job')
+    case 'check_run':
+      return hasOwn(payload, 'check_run')
+    case 'check_suite':
+      return hasOwn(payload, 'check_suite')
+    case 'create':
+    case 'delete':
+      return hasOwn(payload, 'ref_type')
+    case 'fork':
+      return hasOwn(payload, 'forkee')
+    case 'star':
+      return hasOwn(payload, 'starred_at')
+    default:
+      return true
+  }
 }
 
 export function sniffMeta(headers: HeaderMap): boolean {

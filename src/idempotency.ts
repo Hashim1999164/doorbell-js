@@ -18,7 +18,10 @@ type Slot = {
 export class MemoryStore implements IdempotencyStore {
   private readonly slots = new Map<string, Slot>()
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly now: () => number = Date.now,
+    private readonly inflightMs: number = 60_000,
+  ) {}
 
   async claim(key: string): Promise<'run' | 'duplicate'> {
     this.gc()
@@ -36,7 +39,8 @@ export class MemoryStore implements IdempotencyStore {
         })
         continue
       }
-      this.slots.set(key, { state: 'inflight', waiters: [], expiresAt: this.now() + 60_000 })
+      const hold = this.inflightMs > 0 ? this.inflightMs : 60_000
+      this.slots.set(key, { state: 'inflight', waiters: [], expiresAt: this.now() + hold })
       return 'run'
     }
   }

@@ -1,5 +1,5 @@
 import { burnHex } from '../burn.js'
-import { assertFresh } from '../clock.js'
+import { assertFresh, parseUnixSec } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
 import { capParts, header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
@@ -17,7 +17,10 @@ function parseStripeHeader(value: string): { timestamp: number; signatures: stri
     if (eq === -1) continue
     const k = part.slice(0, eq).trim()
     const v = part.slice(eq + 1).trim()
-    if (k === 't') timestamp = Number.parseInt(v, 10)
+    if (k === 't') {
+      const n = parseUnixSec(v)
+      if (n != null) timestamp = n
+    }
     if (k === 'v1') signatures.push(v)
   }
   capParts(signatures, 'Stripe')

@@ -1,5 +1,5 @@
 import { burnHex } from '../burn.js'
-import { assertFresh } from '../clock.js'
+import { assertFresh, parseUnixSec } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
 import { header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
@@ -38,7 +38,6 @@ export const slack: Provider = {
         hint: 'Need X-Slack-Signature and X-Slack-Request-Timestamp.',
       })
     }
-    const timestamp = Number.parseInt(ts, 10)
     const hex = sig.startsWith('v0=') ? sig.slice(3) : sig
     const signed = prefixRaw(`v0:${ts}:`, ctx.raw)
     const ok = await matchAnyHexMac(ctx.secrets, signed, [hex])
@@ -47,6 +46,10 @@ export const slack: Provider = {
         code: 'bad_signature',
         hint: secretHint('slack'),
       })
+    }
+    const timestamp = parseUnixSec(ts)
+    if (timestamp == null) {
+      throw new DoorbellError('Slack timestamp is not a unix second.', { code: 'bad_header' })
     }
     const freshness = assertFresh(timestamp, {
       toleranceSec: ctx.toleranceSec,

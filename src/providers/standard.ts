@@ -1,6 +1,6 @@
 import { burnB64 } from '../burn.js'
 import { standardWebhookKey } from '../bytes.js'
-import { assertFresh } from '../clock.js'
+import { assertFresh, parseUnixSec } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
 import { capParts, header, sigHeader } from '../headers.js'
 import { matchAnyBase64Mac } from '../hmac.js'
@@ -43,8 +43,7 @@ function makeStandard(name: ProviderName, idHeader: string, tsHeader: string, si
           hint: `Need ${idHeader}, ${tsHeader}, ${sigHeaderName}.`,
         })
       }
-      const timestamp = Number.parseInt(ts, 10)
-      const toSign = prefixRaw(`${id}.${timestamp}.`, ctx.raw)
+      const toSign = prefixRaw(`${id}.${ts.trim()}.`, ctx.raw)
       const candidates = capParts(
         sig.split(/[,\s]+/).flatMap((part) => {
           const trimmed = part.trim()
@@ -61,6 +60,10 @@ function makeStandard(name: ProviderName, idHeader: string, tsHeader: string, si
           code: 'bad_signature',
           hint: secretHint(name),
         })
+      }
+      const timestamp = parseUnixSec(ts)
+      if (timestamp == null) {
+        throw new DoorbellError(`${name} timestamp is not a unix second.`, { code: 'bad_header' })
       }
       const freshness = assertFresh(timestamp, {
         toleranceSec: ctx.toleranceSec,

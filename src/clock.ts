@@ -4,6 +4,15 @@ export function unixSeconds(now: Clock = Date.now): number {
   return Math.floor(now() / 1000)
 }
 
+/** Unix seconds as a digit string. Leading zeros and junk after the number do not count. */
+export function parseUnixSec(value: string): number | undefined {
+  const trimmed = value.trim()
+  if (!/^[0-9]{1,12}$/.test(trimmed)) return undefined
+  const n = Number.parseInt(trimmed, 10)
+  if (!Number.isFinite(n) || String(n) !== trimmed) return undefined
+  return n
+}
+
 /**
  * Stripe-node only rejects events older than the window.
  * Slack and Standard Webhooks reject both too old and too new.
