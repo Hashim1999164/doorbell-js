@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.0
+
+HMAC first, then the clock, the way stripe-node does. A missing header still burns HMAC so it is not a faster path. Inflight idempotency claims expire. Shopify checks `X-Shopify-Triggered-At` when it is present. Twilio tries the public URL with and without a trailing slash.
+
 ## 1.2.0
 
 Stripe clock matches stripe-node: too old fails, future timestamps pass. Slack, Svix, Paddle, Linear reject both directions.

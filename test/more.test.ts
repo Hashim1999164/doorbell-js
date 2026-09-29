@@ -34,6 +34,29 @@ describe('shopify linear paddle', () => {
     expect(topic).toBe('orders/create')
   })
 
+  it('rejects an old X-Shopify-Triggered-At after HMAC', async () => {
+    const payload = '{"id":1,"name":"Order"}'
+    const secret = 'shopify_shared_secret'
+    const hmac = await signShopify(payload, secret)
+    const app = doorbell({
+      now: NOW,
+      shopify: { secret, onAny: async () => {} },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/shopify', {
+        method: 'POST',
+        headers: {
+          'x-shopify-hmac-sha256': hmac,
+          'x-shopify-topic': 'orders/create',
+          'x-shopify-triggered-at': '2000-01-01T00:00:00.000Z',
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(await res.text()).toMatch(/triggered-at|window/)
+  })
+
   it('verifies linear hex hmac', async () => {
     const payload = '{"action":"create","type":"Issue"}'
     const secret = 'linear_webhook_secret'

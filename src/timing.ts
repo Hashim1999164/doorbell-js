@@ -33,10 +33,11 @@ export function timingSafeEqualText(a: string, b: string): boolean {
  * return faster on "this is not even hex".
  */
 export function matchAnyDigest(expected: Uint8Array[], provided: Array<Uint8Array | null>): boolean {
+  const gotList = provided.length > 0 ? provided : [null]
   let ok = false
   for (const exp of expected) {
     const dummy = new Uint8Array(exp.byteLength)
-    for (const got of provided) {
+    for (const got of gotList) {
       const right = got && got.byteLength === exp.byteLength ? got : dummy
       if (got && got.byteLength === exp.byteLength && timingSafeEqual(exp, right)) ok = true
       else timingSafeEqual(exp, right)

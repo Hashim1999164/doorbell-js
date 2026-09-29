@@ -193,7 +193,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     const verified = await provider.verify({
       raw,
       headers,
-      secrets: secrets.map((s) => secretBytesUtf8(s).key),
+      secrets: secrets.map((s) => copyBytes(secretBytesUtf8(s).key)),
       secretStrings: secrets,
       toleranceSec,
       now,

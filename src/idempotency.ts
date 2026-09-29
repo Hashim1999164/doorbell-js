@@ -26,6 +26,11 @@ export class MemoryStore implements IdempotencyStore {
       const existing = this.slots.get(key)
       if (existing?.state === 'done' && existing.expiresAt > this.now()) return 'duplicate'
       if (existing?.state === 'inflight') {
+        if (existing.expiresAt <= this.now()) {
+          this.slots.delete(key)
+          for (const w of existing.waiters) w()
+          continue
+        }
         await new Promise<void>((resolve) => {
           existing.waiters.push(resolve)
         })
@@ -52,7 +57,10 @@ export class MemoryStore implements IdempotencyStore {
   private gc() {
     const now = this.now()
     for (const [key, slot] of this.slots) {
-      if (slot.state === 'done' && slot.expiresAt <= now) this.slots.delete(key)
+      if (slot.expiresAt <= now) {
+        for (const w of slot.waiters) w()
+        this.slots.delete(key)
+      }
     }
   }
 }

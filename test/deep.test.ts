@@ -313,3 +313,13 @@ describe('intake safety', () => {
     expect(await res.text()).not.toContain('abc123')
   })
 })
+
+describe('inflight claim', () => {
+  it('expires a stuck inflight slot so a later delivery can run', async () => {
+    let t = 1000
+    const store = new MemoryStore(() => t)
+    expect(await store.claim('k')).toBe('run')
+    t += 61_000
+    expect(await store.claim('k')).toBe('run')
+  })
+})

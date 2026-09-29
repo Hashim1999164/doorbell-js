@@ -1,3 +1,4 @@
+import { burnHex } from '../burn.js'
 import { fromUtf8, utf8 } from '../bytes.js'
 import { DoorbellError, secretHint } from '../errors.js'
 import { header, sigHeader } from '../headers.js'
@@ -32,6 +33,7 @@ export const github: Provider = {
   async verify(ctx) {
     const sig = sigHeader(ctx.headers, 'x-hub-signature-256', 'GitHub')
     if (!sig) {
+      await burnHex(ctx.secrets, ctx.raw)
       throw new DoorbellError('No X-Hub-Signature-256 header.', {
         code: 'missing_header',
         hint: 'GitHub only sends this if you set a secret on the webhook. Empty secret means anyone can POST here.',
@@ -39,6 +41,7 @@ export const github: Provider = {
     }
     const hex = signatureHex(sig)
     if (!hex) {
+      await burnHex(ctx.secrets, ctx.raw)
       throw new DoorbellError('GitHub signature was sha1. That scheme is dead. Use sha256.', {
         code: 'bad_header',
       })
@@ -78,6 +81,7 @@ export const meta: Provider = {
   async verify(ctx) {
     const sig = sigHeader(ctx.headers, 'x-hub-signature-256', 'Meta')
     if (!sig) {
+      await burnHex(ctx.secrets, ctx.raw)
       throw new DoorbellError('No X-Hub-Signature-256 header from Meta.', {
         code: 'missing_header',
         hint: secretHint('meta'),
@@ -85,6 +89,7 @@ export const meta: Provider = {
     }
     const hex = signatureHex(sig)
     if (!hex) {
+      await burnHex(ctx.secrets, ctx.raw)
       throw new DoorbellError('Meta signature missing sha256= prefix.', { code: 'bad_header' })
     }
     const ok = await matchAnyHexMac(ctx.secrets, ctx.raw, [hex])

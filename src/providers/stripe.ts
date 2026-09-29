@@ -1,3 +1,4 @@
+import { burnHex } from '../burn.js'
 import { assertFresh } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
 import { capParts, header, sigHeader } from '../headers.js'
@@ -45,6 +46,7 @@ export const stripe: Provider = {
   async verify(ctx) {
     const sigHeaderValue = sigHeader(ctx.headers, 'stripe-signature', 'Stripe')
     if (!sigHeaderValue) {
+      await burnHex(ctx.secrets, ctx.raw)
       throw new DoorbellError('No stripe-signature header.', {
         code: 'missing_header',
         hint: 'Stripe always sends Stripe-Signature. If you do not see it, a proxy stripped it.',
@@ -52,10 +54,16 @@ export const stripe: Provider = {
     }
     const { timestamp, signatures } = parseStripeHeader(sigHeaderValue)
     if (timestamp < 0 || signatures.length === 0) {
+      await burnHex(ctx.secrets, ctx.raw)
       throw new DoorbellError('Could not read timestamp and v1 signatures from Stripe-Signature.', {
         code: 'bad_header',
         hint: 'The header looks like t=123,v1=hex. If you pasted a test string, check commas.',
       })
+    }
+    const signed = prefixRaw(`${timestamp}.`, ctx.raw)
+    const ok = await matchAnyHexMac(ctx.secrets, signed, signatures)
+    if (!ok) {
+      throw stripeMismatch(ctx)
     }
     const freshness = assertFresh(timestamp, {
       toleranceSec: ctx.toleranceSec,
@@ -67,11 +75,6 @@ export const stripe: Provider = {
         code: 'replay',
         hint: 'Default window is 5 minutes. Stripe-node only rejects old events, not future ones. If your server clock is wrong, fix NTP.',
       })
-    }
-    const signed = prefixRaw(`${timestamp}.`, ctx.raw)
-    const ok = await matchAnyHexMac(ctx.secrets, signed, signatures)
-    if (!ok) {
-      throw stripeMismatch(ctx)
     }
     return { timestampSec: timestamp }
   },

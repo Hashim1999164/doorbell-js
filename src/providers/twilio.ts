@@ -1,4 +1,5 @@
 import { utf8 } from '../bytes.js'
+import { burnSha1 } from '../burn.js'
 import { DoorbellError, secretHint } from '../errors.js'
 import { header, sigHeader } from '../headers.js'
 import { hmacSha1, timingSafeEqual } from '../hmac.js'
@@ -23,6 +24,12 @@ function twilioBase(url: string, params: URLSearchParams): string {
   return out
 }
 
+function urlVariants(url: string): string[] {
+  const noSlash = url.replace(/\/+$/, '')
+  const slash = `${noSlash}/`
+  return [...new Set([url, noSlash, slash].filter((u) => u.length > 0))]
+}
+
 export const twilio: Provider = {
   name: 'twilio',
   sniff: sniffTwilio,
@@ -45,21 +52,28 @@ export const twilio: Provider = {
   async verify(ctx) {
     const sig = sigHeader(ctx.headers, 'x-twilio-signature', 'Twilio')
     if (!sig) {
+      await burnSha1(ctx.secrets, ctx.raw)
       throw new DoorbellError('No X-Twilio-Signature header.', { code: 'missing_header' })
     }
     if (!ctx.url) {
+      await burnSha1(ctx.secrets, ctx.raw)
       throw new DoorbellError('Twilio checks need the public URL Twilio called.', {
         code: 'missing_url',
         hint: secretHint('twilio'),
       })
     }
     const params = formParams(ctx.raw)
-    const base = utf8(twilioBase(ctx.url, params))
+    const provided = parseBase64(sig)
     let ok = false
-    for (const key of ctx.secrets) {
-      const mac = await hmacSha1(key, base)
-      const provided = parseBase64(sig)
-      if (provided && timingSafeEqual(mac, provided)) ok = true
+    for (const url of urlVariants(ctx.url)) {
+      const base = utf8(twilioBase(url, params))
+      for (const key of ctx.secrets) {
+        const mac = await hmacSha1(key, base)
+        const dummy = new Uint8Array(mac.byteLength)
+        const right = provided && provided.byteLength === mac.byteLength ? provided : dummy
+        if (provided && provided.byteLength === mac.byteLength && timingSafeEqual(mac, right)) ok = true
+        else timingSafeEqual(mac, right)
+      }
     }
     if (!ok) {
       throw new DoorbellError('Twilio signature did not match.', {

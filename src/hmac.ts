@@ -1,4 +1,4 @@
-import { parseBase64, parseHex, toBase64, toHex } from './bytes.js'
+import { copyBytes, parseBase64, parseHex, toBase64, toHex } from './bytes.js'
 import { matchAnyDigest } from './timing.js'
 
 export async function hmacSha256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
@@ -14,6 +14,7 @@ async function hmac(
   data: Uint8Array,
   hash: 'SHA-256' | 'SHA-1',
 ): Promise<Uint8Array> {
+  key = copyBytes(key)
   if (key.byteLength === 0) {
     throw new Error('HMAC key is empty')
   }
@@ -77,7 +78,7 @@ export async function matchAnyHexMac(
   candidates: string[],
 ): Promise<boolean> {
   const expected = await Promise.all(keys.map((key) => hmacSha256(key, data)))
-  const provided = candidates.map((c) => parseHex(c))
+  const provided = (candidates.length > 0 ? candidates : ['']).map((c) => parseHex(c))
   return matchAnyDigest(expected, provided)
 }
 
@@ -87,7 +88,7 @@ export async function matchAnyBase64Mac(
   candidates: string[],
 ): Promise<boolean> {
   const expected = await Promise.all(keys.map((key) => hmacSha256(key, data)))
-  const provided = candidates.map((c) => parseBase64(c))
+  const provided = (candidates.length > 0 ? candidates : ['']).map((c) => parseBase64(c))
   return matchAnyDigest(expected, provided)
 }
 

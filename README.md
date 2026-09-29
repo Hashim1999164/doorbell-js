@@ -74,9 +74,13 @@ Compare the digest bytes, not the header string. `===` on hex is how you leak th
 
 ## Time
 
+HMAC first, then the clock. stripe-node does it that way. A wrong secret on an old event says the signature is wrong, not that the timestamp is old.
+
 Stripe-node only rejects events that are too old. A Stripe timestamp two minutes in the future still verifies. doorbell matches that, because your handler should not disagree with `constructEvent`.
 
-Slack, Svix, Clerk, Resend, Paddle, and Linear (when `webhookTimestamp` is in the signed JSON) reject both too old and too new. A timestamp from next week is how you stash a signed body and replay it when the clock catches up.
+Slack, Svix, Clerk, Resend, Paddle, Shopify (`X-Shopify-Triggered-At` when present), and Linear (when `webhookTimestamp` is in the signed JSON) reject both too old and too new. A timestamp from next week is how you stash a signed body and replay it when the clock catches up.
+
+A missing signature header still runs HMAC, so that path is not faster than a bad one.
 
 Default window is 5 minutes. Fix NTP. Do not turn this off in production.
 
@@ -93,11 +97,11 @@ Meta `hub.verify_token` is compared in constant time. Slack URL verification sti
 | Stripe | Endpoint signing secret. Not `sk_live_`. Future timestamps allowed, old ones not. |
 | GitHub | Webhook Secret field. Ping is answered. Not a PAT. |
 | Slack | Signing Secret. URL verification is answered after HMAC. Not `xoxb-`. |
-| Shopify | `X-Shopify-Hmac-Sha256` |
+| Shopify | `X-Shopify-Hmac-Sha256`. Checks `X-Shopify-Triggered-At` when Shopify sends it. |
 | Svix / Clerk / Resend | Standard Webhooks. Path required if you take more than one. Both-way clock. |
 | Linear, Paddle | Hex / `ts;h1`. Linear also checks `webhookTimestamp` when it is present. |
 | Meta | POST signed. GET `hub.challenge` needs `verifyToken` |
-| Twilio | Auth token plus the public URL Twilio called |
+| Twilio | Auth token plus the public URL Twilio called. Trailing slash on that URL is tried both ways. |
 
 ## What it will not do for you
 
@@ -105,7 +109,7 @@ Unknown event types return 200. Stripe retries 5xx. You do not want a week of `c
 
 A handler crash returns 500 so the sender retries.
 
-Same event id twice returns 200 and skips the work. Two copies at once wait on the first one.
+Same event id twice returns 200 and skips the work. Two copies at once wait on the first one. A stuck inflight claim expires after a minute so the next delivery is not wedged.
 
 Default body cap is 5MB. A stuck handler can be cut off with `handlerTimeoutMs`.
 

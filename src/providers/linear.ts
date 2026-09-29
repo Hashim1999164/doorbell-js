@@ -1,3 +1,4 @@
+import { burnHex } from '../burn.js'
 import { assertFresh } from '../clock.js'
 import { DoorbellError } from '../errors.js'
 import { header, sigHeader } from '../headers.js'
@@ -29,6 +30,7 @@ export const linear: Provider = {
   async verify(ctx) {
     const sig = sigHeader(ctx.headers, 'linear-signature', 'Linear')
     if (!sig) {
+      await burnHex(ctx.secrets, ctx.raw)
       throw new DoorbellError('No Linear-Signature header.', { code: 'missing_header' })
     }
     const ok = await matchAnyHexMac(ctx.secrets, ctx.raw, [sig])

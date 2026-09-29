@@ -120,6 +120,25 @@ describe('stripe', () => {
     expect(await res.text()).toContain('did not match')
   })
 
+  it('fails a wrong secret even when the timestamp is also old', async () => {
+    const header = await signStripe(payload, secret, 1000)
+    const app = doorbell({
+      now: NOW,
+      stripe: { secret: 'whsec_other', onAny: async () => {} },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/stripe', {
+        method: 'POST',
+        headers: { 'stripe-signature': header },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    const text = await res.text()
+    expect(text).toContain('did not match')
+    expect(text).not.toContain('too old')
+  })
+
   it('fails a replayed old timestamp', async () => {
     const header = await signStripe(payload, secret, 1000)
     const app = doorbell({

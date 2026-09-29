@@ -1,3 +1,4 @@
+import { burnHex } from '../burn.js'
 import { assertFresh } from '../clock.js'
 import { DoorbellError } from '../errors.js'
 import { capParts, header, sigHeader } from '../headers.js'
@@ -36,13 +37,20 @@ export const paddle: Provider = {
   async verify(ctx) {
     const sig = sigHeader(ctx.headers, 'paddle-signature', 'Paddle')
     if (!sig) {
+      await burnHex(ctx.secrets, ctx.raw)
       throw new DoorbellError('No Paddle-Signature header.', { code: 'missing_header' })
     }
     const parsed = parsePaddleHeader(sig)
     if (!parsed.ts || parsed.h1.length === 0) {
+      await burnHex(ctx.secrets, ctx.raw)
       throw new DoorbellError('Could not read ts and h1 from Paddle-Signature.', { code: 'bad_header' })
     }
     const timestamp = Number.parseInt(parsed.ts, 10)
+    const signed = prefixRaw(`${parsed.ts}:`, ctx.raw)
+    const ok = await matchAnyHexMac(ctx.secrets, signed, parsed.h1)
+    if (!ok) {
+      throw new DoorbellError('Paddle signature did not match.', { code: 'bad_signature' })
+    }
     const freshness = assertFresh(timestamp, {
       toleranceSec: ctx.toleranceSec,
       now: ctx.now,
@@ -50,11 +58,6 @@ export const paddle: Provider = {
     })
     if (freshness !== 'ok') {
       throw new DoorbellError('Paddle timestamp is outside the allowed window.', { code: 'replay' })
-    }
-    const signed = prefixRaw(`${parsed.ts}:`, ctx.raw)
-    const ok = await matchAnyHexMac(ctx.secrets, signed, parsed.h1)
-    if (!ok) {
-      throw new DoorbellError('Paddle signature did not match.', { code: 'bad_signature' })
     }
     return { timestampSec: timestamp }
   },

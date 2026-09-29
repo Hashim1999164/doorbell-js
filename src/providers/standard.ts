@@ -1,3 +1,4 @@
+import { burnB64 } from '../burn.js'
 import { standardWebhookKey } from '../bytes.js'
 import { assertFresh } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
@@ -25,22 +26,6 @@ function makeStandard(name: ProviderName, idHeader: string, tsHeader: string, si
       const id = sigHeader(ctx.headers, idHeader, name)
       const ts = sigHeader(ctx.headers, tsHeader, name)
       const sig = sigHeader(ctx.headers, sigHeaderName, name)
-      if (!id || !ts || !sig) {
-        throw new DoorbellError(`Missing ${name} Standard Webhooks headers.`, {
-          code: 'missing_header',
-          hint: `Need ${idHeader}, ${tsHeader}, ${sigHeaderName}.`,
-        })
-      }
-      const timestamp = Number.parseInt(ts, 10)
-      const freshness = assertFresh(timestamp, {
-        toleranceSec: ctx.toleranceSec,
-        now: ctx.now,
-        future: 'reject',
-      })
-      if (freshness !== 'ok') {
-        throw new DoorbellError(`${name} timestamp is outside the allowed window.`, { code: 'replay' })
-      }
-      const toSign = prefixRaw(`${id}.${timestamp}.`, ctx.raw)
       const keys = ctx.secretStrings.map((s) => {
         try {
           return standardWebhookKey(s)
@@ -51,6 +36,15 @@ function makeStandard(name: ProviderName, idHeader: string, tsHeader: string, si
           })
         }
       })
+      if (!id || !ts || !sig) {
+        await burnB64(keys, ctx.raw)
+        throw new DoorbellError(`Missing ${name} Standard Webhooks headers.`, {
+          code: 'missing_header',
+          hint: `Need ${idHeader}, ${tsHeader}, ${sigHeaderName}.`,
+        })
+      }
+      const timestamp = Number.parseInt(ts, 10)
+      const toSign = prefixRaw(`${id}.${timestamp}.`, ctx.raw)
       const candidates = capParts(
         sig.split(/[,\s]+/).flatMap((part) => {
           const trimmed = part.trim()
@@ -67,6 +61,14 @@ function makeStandard(name: ProviderName, idHeader: string, tsHeader: string, si
           code: 'bad_signature',
           hint: secretHint(name),
         })
+      }
+      const freshness = assertFresh(timestamp, {
+        toleranceSec: ctx.toleranceSec,
+        now: ctx.now,
+        future: 'reject',
+      })
+      if (freshness !== 'ok') {
+        throw new DoorbellError(`${name} timestamp is outside the allowed window.`, { code: 'replay' })
       }
       return { timestampSec: timestamp }
     },

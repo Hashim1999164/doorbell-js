@@ -1,3 +1,4 @@
+import { burnHex } from '../burn.js'
 import { assertFresh } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
 import { header, sigHeader } from '../headers.js'
@@ -30,12 +31,22 @@ export const slack: Provider = {
     const sig = sigHeader(ctx.headers, 'x-slack-signature', 'Slack')
     const ts = sigHeader(ctx.headers, 'x-slack-request-timestamp', 'Slack')
     if (!sig || !ts) {
+      await burnHex(ctx.secrets, ctx.raw)
       throw new DoorbellError('Missing Slack signature headers.', {
         code: 'missing_header',
         hint: 'Need X-Slack-Signature and X-Slack-Request-Timestamp.',
       })
     }
     const timestamp = Number.parseInt(ts, 10)
+    const hex = sig.startsWith('v0=') ? sig.slice(3) : sig
+    const signed = prefixRaw(`v0:${ts}:`, ctx.raw)
+    const ok = await matchAnyHexMac(ctx.secrets, signed, [hex])
+    if (!ok) {
+      throw new DoorbellError('Slack signature did not match.', {
+        code: 'bad_signature',
+        hint: secretHint('slack'),
+      })
+    }
     const freshness = assertFresh(timestamp, {
       toleranceSec: ctx.toleranceSec,
       now: ctx.now,
@@ -44,16 +55,7 @@ export const slack: Provider = {
     if (freshness !== 'ok') {
       throw new DoorbellError('Slack timestamp is outside the allowed window.', {
         code: 'replay',
-        hint: 'Slack asks for 5 minutes either side. A timestamp from the future is how you replay it later.',
-      })
-    }
-    const hex = sig.startsWith('v0=') ? sig.slice(3) : sig
-    const signed = prefixRaw(`v0:${ts}:`, ctx.raw)
-    const ok = await matchAnyHexMac(ctx.secrets, signed, [hex])
-    if (!ok) {
-      throw new DoorbellError('Slack signature did not match.', {
-        code: 'bad_signature',
-        hint: secretHint('slack'),
+        hint: 'Slack asks for 5 minutes either side. A timestamp from the future is how you stash a signed body and replay it later.',
       })
     }
     return { timestampSec: timestamp }
