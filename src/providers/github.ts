@@ -25,12 +25,13 @@ export const github: Provider = {
   eventId(_headers, _payload, raw) {
     return bodyFingerprint(raw)
   },
-  eventType(headers, payload) {
+  eventType(_headers, payload) {
     // X-GitHub-Event is not in the HMAC. Known shapes take the type from the signed JSON.
+    // Unknown shapes are type github so on[member] cannot be aimed at a captured wiki body.
     const inferred = githubEventsForBody(payload)
-    const event = inferred?.[0] ?? header(headers, 'x-github-event') ?? 'unknown'
+    if (!inferred?.[0]) return 'github'
     const action = stringField(payload, 'action')
-    return action ? `${event}.${action}` : event
+    return action ? `${inferred[0]}.${action}` : inferred[0]
   },
   async verify(ctx) {
     const sig = sigHeader(ctx.headers, 'x-hub-signature-256', 'GitHub')
@@ -88,11 +89,14 @@ function githubEventsForBody(payload: unknown): string[] | undefined {
   if (hasOwn(payload, 'release')) return ['release']
   if (hasOwn(payload, 'forkee')) return ['fork']
   if (hasOwn(payload, 'starred_at')) return ['star']
+  if (hasOwn(payload, 'pages')) return ['gollum']
   if (hasOwn(payload, 'issue') && hasOwn(payload, 'comment')) return ['issue_comment']
   if (hasOwn(payload, 'issue')) return ['issues']
   if (hasOwn(payload, 'review') && hasOwn(payload, 'pull_request')) return ['pull_request_review']
   if (hasOwn(payload, 'comment') && hasOwn(payload, 'pull_request')) return ['pull_request_review_comment']
   if (hasOwn(payload, 'pull_request')) return ['pull_request']
+  if (hasOwn(payload, 'member') && hasOwn(payload, 'team')) return ['membership']
+  if (hasOwn(payload, 'member')) return ['member']
   // create always has master_branch. delete is ref_type without it.
   if (hasOwn(payload, 'ref_type')) return hasOwn(payload, 'master_branch') ? ['create'] : ['delete']
   if (hasOwn(payload, 'ref') || hasOwn(payload, 'commits')) return ['push']

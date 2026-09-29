@@ -38,7 +38,12 @@ export const twilio: Provider = {
   sniff: sniffTwilio,
   parse(raw) {
     const params = formParams(raw)
-    return Object.fromEntries(params.entries())
+    const out: Record<string, string | string[]> = {}
+    for (const key of new Set(params.keys())) {
+      const all = params.getAll(key)
+      out[key] = all.length === 1 ? (all[0] as string) : all
+    }
+    return out
   },
   eventId(_headers, payload, raw) {
     return stringField(payload, 'MessageSid') ?? stringField(payload, 'CallSid') ?? bodyFingerprint(raw)

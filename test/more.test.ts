@@ -4,7 +4,7 @@ import { doorbell } from '../src/doorbell.js'
 import { headerMap } from '../src/headers.js'
 import { MemoryStore } from '../src/idempotency.js'
 import { parseJsonBody, stringField } from '../src/json.js'
-import { signGitHub, signLinear, signPaddle, signShopify, signStripe } from '../src/sign.js'
+import { signGitHub, signLinear, signPaddle, signShopify, signStripe, signTwilio } from '../src/sign.js'
 
 const NOW = () => 1_614_556_800_000
 
@@ -185,7 +185,41 @@ describe('shopify linear paddle', () => {
     expect(orders).toBe(true)
   })
 
-  it('still runs app/uninstalled when the body is not an order', async () => {
+  it('does not run on[customers/data_request] from the unsigned topic', async () => {
+    const payload = '{"id":"gid://shopify/AppInstallation/1"}'
+    const secret = 'shopify_shared_secret'
+    const hmac = await signShopify(payload, secret)
+    let redact = false
+    let shopifyType = false
+    const app = doorbell({
+      shopify: {
+        secret,
+        on: {
+          'customers/data_request': async () => {
+            redact = true
+          },
+          shopify: async () => {
+            shopifyType = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/shopify', {
+        method: 'POST',
+        headers: {
+          'x-shopify-hmac-sha256': hmac,
+          'x-shopify-topic': 'customers/data_request',
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(redact).toBe(false)
+    expect(shopifyType).toBe(true)
+  })
+
+  it('runs on.shopify for bodies that are not orders or products', async () => {
     const payload = '{"id":"gid://shopify/AppInstallation/1"}'
     const secret = 'shopify_shared_secret'
     const hmac = await signShopify(payload, secret)
@@ -194,7 +228,7 @@ describe('shopify linear paddle', () => {
       shopify: {
         secret,
         on: {
-          'app/uninstalled': async () => {
+          shopify: async () => {
             ran = true
           },
         },
@@ -248,6 +282,32 @@ describe('shopify linear paddle', () => {
       }),
     )
     expect(res.status).toBe(200)
+  })
+
+  it('keeps duplicate Twilio form keys the HMAC saw', async () => {
+    const url = 'https://shop.test/webhooks/twilio'
+    const body = 'MessageSid=SM1&AddOns=a&AddOns=b'
+    const secret = 'twilio_auth_token'
+    const sig = await signTwilio(url, body, secret)
+    let addons: unknown
+    const app = doorbell({
+      publicUrl: url,
+      twilio: {
+        secret,
+        onAny: async (event) => {
+          addons = (event.payload as { AddOns?: unknown }).AddOns
+        },
+      },
+    })
+    const res = await app(
+      new Request(url, {
+        method: 'POST',
+        headers: { 'x-twilio-signature': sig, 'content-type': 'application/x-www-form-urlencoded' },
+        body,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(addons).toEqual(['a', 'b'])
   })
 })
 

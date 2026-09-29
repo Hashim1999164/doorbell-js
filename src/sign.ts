@@ -1,5 +1,5 @@
 import { secretBytesUtf8, standardWebhookKey, utf8 } from './bytes.js'
-import { hmacSha256, hmacSha256Hex } from './hmac.js'
+import { hmacSha1, hmacSha256, hmacSha256Hex } from './hmac.js'
 import { toBase64 } from './bytes.js'
 import { prefixRaw } from './wire.js'
 
@@ -48,6 +48,17 @@ export async function signPaddle(
   const raw = typeof payload === 'string' ? utf8(payload) : payload
   const mac = await hmacSha256Hex(secretBytesUtf8(secret).key, prefixRaw(`${timestampSec}:`, raw))
   return `ts=${timestampSec};h1=${mac}`
+}
+
+export async function signTwilio(url: string, body: string, secret: string): Promise<string> {
+  const params = new URLSearchParams(body)
+  const keys = [...new Set(params.keys())].sort()
+  let out = url
+  for (const key of keys) {
+    for (const value of params.getAll(key)) out += key + value
+  }
+  const mac = await hmacSha1(secretBytesUtf8(secret).key, utf8(out))
+  return toBase64(mac)
 }
 
 export async function signStandard(

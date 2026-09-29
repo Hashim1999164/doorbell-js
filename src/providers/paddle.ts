@@ -17,9 +17,12 @@ function parsePaddleHeader(value: string): { ts: string; h1: string[] } {
   const ts = []
   const h1 = []
   for (const part of capParts(value.split(';'), 'Paddle')) {
-    const [k, v] = part.split('=')
-    if (k?.trim() === 'ts' && v) ts.push(v.trim())
-    if (k?.trim() === 'h1' && v) h1.push(v.trim())
+    const eq = part.indexOf('=')
+    if (eq === -1) continue
+    const k = part.slice(0, eq).trim()
+    const v = part.slice(eq + 1).trim()
+    if (k === 'ts' && v) ts.push(v)
+    if (k === 'h1' && v) h1.push(v)
   }
   capParts(h1, 'Paddle')
   return { ts: ts[0] ?? '', h1 }

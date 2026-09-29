@@ -340,7 +340,7 @@ describe('github', () => {
     expect(ran).toBe(false)
   })
 
-  it('still runs gollum when the body is not a known GitHub family', async () => {
+  it('runs gollum when the signed JSON has pages', async () => {
     const payload = '{"pages":[{"page_name":"Home"}]}'
     const secret = 'github_webhook_secret'
     const sig = await signGitHub(payload, secret)
@@ -367,6 +367,35 @@ describe('github', () => {
     )
     expect(res.status).toBe(200)
     expect(ran).toBe(true)
+  })
+
+  it('refuses a wiki body labelled member', async () => {
+    const payload = '{"pages":[{"page_name":"Home"}]}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    let ran = false
+    const app = doorbell({
+      github: {
+        secret,
+        on: {
+          member: async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'member',
+          'x-hub-signature-256': sig,
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(ran).toBe(false)
   })
 
   it('refuses a delete body labelled create', async () => {

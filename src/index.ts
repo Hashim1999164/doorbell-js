@@ -18,4 +18,5 @@ export {
   signSlack,
   signStandard,
   signStripe,
+  signTwilio,
 } from './sign.js'

@@ -18,11 +18,11 @@ export const shopify: Provider = {
   eventId(_headers, _payload, raw) {
     return bodyFingerprint(raw)
   },
-  eventType(headers, payload) {
+  eventType(_headers, payload) {
     // X-Shopify-Topic is not in the HMAC. Do not dispatch on[orders/paid] from that header.
     const family = shopifyFamilyForBody(payload)
     if (family) return family
-    return header(headers, 'x-shopify-topic') ?? 'unknown'
+    return 'shopify'
   },
   async verify(ctx) {
     const hmac = sigHeader(ctx.headers, 'x-shopify-hmac-sha256', 'Shopify')

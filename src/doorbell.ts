@@ -233,12 +233,10 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     }
 
     const key = `${name}:${event.id}`
-    const claim = await store.claim(key)
+    const claim = await store.claim(key, { pin: true })
     if (claim === 'duplicate') {
       return json(200, { ok: true, duplicate: true, id: event.id })
     }
-    // Pin until this work settles. Timeout plus inflightMs is still too short
-    // if the handler keeps running after we already returned 500.
     await store.pin?.(key)
 
     const work = Promise.resolve(fn(event)).then(() => undefined)

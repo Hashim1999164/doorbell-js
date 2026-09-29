@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.8.0
+
+Unknown GitHub and Shopify shapes no longer take `event.type` from unsigned headers. A captured wiki body labelled `member` does not run `on.member`. A captured uninstall body labelled `customers/data_request` does not run that handler. Those are type `github` / `shopify`. Gollum is inferred from `pages`.
+
+Inflight pin happens in `claim`, so expiry cannot steal the slot before `pin()`.
+
+The fetch path does not 413 on Content-Length. It caps on bytes actually read. Twilio parse keeps duplicate form keys the HMAC saw. Paddle header values keep text after the first `=`.
+
 ## 1.7.0
 
 Inflight expiry still stole the slot while a timed out handler was writing. Pin the claim until that work commits or drops.

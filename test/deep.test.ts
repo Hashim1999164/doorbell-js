@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { doorbell } from '../src/doorbell.js'
 import { MemoryStore } from '../src/idempotency.js'
-import { preserveRawBody } from '../src/raw.js'
+import { preserveRawBody, readRequestBodyCapped } from '../src/raw.js'
 import { signGitHub, signSlack, signStripe } from '../src/sign.js'
 import { prefixRaw } from '../src/wire.js'
 import { fromUtf8, utf8 } from '../src/bytes.js'
@@ -100,6 +100,29 @@ describe('limits', () => {
       }),
     )
     expect(res.status).toBe(413)
+  })
+
+  it('caps on bytes read, not on Content-Length', async () => {
+    const payload = '{"id":"evt_cl","type":"ping"}'
+    const bytes = utf8(payload)
+    let once = false
+    const req = {
+      headers: { get: (name: string) => (name.toLowerCase() === 'content-length' ? '99999999' : null) },
+      body: {
+        getReader() {
+          return {
+            async read() {
+              if (once) return { done: true as const, value: undefined }
+              once = true
+              return { done: false as const, value: bytes }
+            },
+            async cancel() {},
+          }
+        },
+      },
+    }
+    const got = await readRequestBodyCapped(req as unknown as Request, 5000)
+    expect(got.byteLength).toBe(bytes.byteLength)
   })
 
   it('times out a stuck handler so the sender retries', async () => {
@@ -504,6 +527,16 @@ describe('inflight claim', () => {
     t += 200
     const waiter = store.claim('k')
     t += 1
+    await store.commit('k', 1000)
+    expect(await waiter).toBe('duplicate')
+  })
+
+  it('pins on claim so expiry cannot steal the slot before pin()', async () => {
+    let t = 1000
+    const store = new MemoryStore(() => t, 50)
+    expect(await store.claim('k', { pin: true })).toBe('run')
+    t += 200
+    const waiter = store.claim('k')
     await store.commit('k', 1000)
     expect(await waiter).toBe('duplicate')
   })

@@ -4,7 +4,7 @@ export type IdempotencyStore = {
    * 'duplicate' if it already succeeded.
    * Concurrent deliveries of the same id wait on the first one.
    */
-  claim(key: string): Promise<'run' | 'duplicate'>
+  claim(key: string, opts?: { pin?: boolean }): Promise<'run' | 'duplicate'>
   commit(key: string, ttlMs: number): Promise<void>
   drop(key: string): Promise<void>
   /**
@@ -29,7 +29,7 @@ export class MemoryStore implements IdempotencyStore {
     private readonly inflightMs: number = 60_000,
   ) {}
 
-  async claim(key: string): Promise<'run' | 'duplicate'> {
+  async claim(key: string, opts?: { pin?: boolean }): Promise<'run' | 'duplicate'> {
     this.gc()
     for (;;) {
       const existing = this.slots.get(key)
@@ -46,7 +46,12 @@ export class MemoryStore implements IdempotencyStore {
         continue
       }
       const hold = this.inflightMs > 0 ? this.inflightMs : 60_000
-      this.slots.set(key, { state: 'inflight', waiters: [], expiresAt: this.now() + hold, pinned: false })
+      this.slots.set(key, {
+        state: 'inflight',
+        waiters: [],
+        expiresAt: this.now() + hold,
+        pinned: Boolean(opts?.pin),
+      })
       return 'run'
     }
   }

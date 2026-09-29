@@ -41,13 +41,8 @@ export function rawFromNodeRequest(req: RawCarrier): Uint8Array {
   return asRawBody(req.body)
 }
 
-/** Stop reading once the body is over the cap. Do not buffer 50MB then return 413. */
+/** Stop reading once the body is over the cap. Do not trust Content-Length. */
 export async function readRequestBodyCapped(req: Request, maxBodyBytes: number): Promise<Uint8Array> {
-  const declared = req.headers.get('content-length')
-  if (maxBodyBytes > 0 && declared) {
-    const n = Number(declared)
-    if (Number.isFinite(n) && n > maxBodyBytes) throw tooLargeError(n, maxBodyBytes)
-  }
   const reader = req.body?.getReader()
   if (!reader) return new Uint8Array()
   const chunks: Uint8Array[] = []
