@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stripe webhook signature verification in Node.js | doorbell-js</title>
+  <meta name="description" content="Fix Stripe constructEvent: No signatures found matching the expected signature for payload. HMAC the raw body. Next.js and Express examples.">
+  <link rel="canonical" href="https://hashim1999164.github.io/doorbell-js/stripe.html">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Stripe webhook signature verification in Node.js">
+  <meta property="og:description" content="Why constructEvent fails after express.json, and how doorbell-js HMAC the raw bytes.">
+  <meta property="og:url" content="https://hashim1999164.github.io/doorbell-js/stripe.html">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <nav><a href="./">doorbell-js</a> · <a href="./stripe.html">Stripe</a> · <a href="./express.html">express.json</a> · <a href="./faq.html">FAQ</a></nav>
+    <h1>Stripe webhook signature verification in Node.js</h1>
+    <p class="lead">Stripe signs <code>timestamp + '.' + raw body</code>. If those bytes change, stripe-node says:</p>
+    <pre><code>No signatures found matching the expected signature for payload</code></pre>
+    <h2>The three inputs</h2>
+    <ul>
+      <li>Raw body. Not <code>req.body</code> after <code>express.json()</code>.</li>
+      <li><code>Stripe-Signature</code> header.</li>
+      <li>Endpoint signing secret starting with <code>whsec_</code>. Not <code>sk_live_</code>.</li>
+    </ul>
+    <p>The Dashboard <code>whsec_</code> and the <code>stripe listen</code> secret are different keys.</p>
+    <h2>Next.js App Router</h2>
+    <pre><code>import { doorbell } from 'doorbell-js'
+
+export const POST = doorbell({
+  stripe: {
+    secret: process.env.STRIPE_WEBHOOK_SECRET,
+    on: {
+      'checkout.session.completed': async (event) => fulfill(event.payload),
+    },
+  },
+})</code></pre>
+    <p>Do not call <code>req.json()</code> first.</p>
+    <h2>Express</h2>
+    <p>Use <code>preserveRawBody</code> if <code>express.json()</code> already runs, or mount the route on <code>express.raw()</code>. <a href="./express.html">Why express.json breaks HMAC</a>.</p>
+    <p>doorbell HMAC the bytes, then parse. stripe-node <code>constructEvent</code> decodes to a UTF-8 string first. Future Stripe timestamps still verify, same as stripe-node.</p>
+    <p><a href="https://github.com/Hashim1999164/doorbell-js/blob/main/docs/stripe-webhook-signature-nodejs.md">Markdown version</a> · <a href="https://github.com/Hashim1999164/doorbell-js">GitHub</a></p>
+    <footer>doorbell-js · Stripe-Signature · HMAC-SHA256</footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>doorbell-js: Stripe, GitHub, Slack webhook signature verification for Node.js</title>
+  <meta name="description" content="Verify Stripe, GitHub, Slack, Shopify, and Clerk webhook signatures in Node.js. HMAC the raw body, not JSON.parse. Fixes express.json and constructEvent failures.">
+  <link rel="canonical" href="https://hashim1999164.github.io/doorbell-js/">
+  <meta name="robots" content="index,follow">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="doorbell-js: webhook signature verification for Node.js">
+  <meta property="og:description" content="HMAC the raw bytes Stripe actually signed. One handler for Stripe, GitHub, Slack, Shopify, Clerk, and Svix.">
+  <meta property="og:url" content="https://hashim1999164.github.io/doorbell-js/">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="doorbell-js">
+  <meta name="twitter:description" content="Webhook signature verification for Node.js. HMAC the raw body, not JSON.parse.">
+  <link rel="stylesheet" href="styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "doorbell-js",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Node.js 18+",
+        "license": "https://opensource.org/licenses/MIT",
+        "url": "https://hashim1999164.github.io/doorbell-js/",
+        "codeRepository": "https://github.com/Hashim1999164/doorbell-js",
+        "downloadUrl": "https://www.npmjs.com/package/doorbell-js",
+        "author": { "@type": "Person", "name": "Hashim Khan" },
+        "description": "Webhook signature verification for Stripe, GitHub, Slack, Shopify, Clerk, and Svix in Node.js. HMAC-SHA256 over the raw request body.",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "No signatures found matching the expected signature for payload. What broke?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "The request body was parsed or rewritten before HMAC, or the secret is not the endpoint whsec_ key. express.json(), req.json(), and using sk_live_ instead of the webhook signing secret are the usual causes."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How do I verify a Stripe webhook in Next.js App Router?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Export doorbell({ stripe: { secret, on } }) as POST. Do not call req.json(). The HMAC is over the raw Request body."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Why does express.json break GitHub and Stripe webhooks?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Those providers HMAC the exact bytes on the wire. express.json turns the body into an object. JSON.stringify of that object is a different string, so the signature never matches."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <main>
+    <nav><a href="./">doorbell-js</a> · <a href="https://github.com/Hashim1999164/doorbell-js">GitHub</a> · <a href="https://www.npmjs.com/package/doorbell-js">npm</a></nav>
+    <h1>Webhook signature verification for Node.js</h1>
+    <p class="lead">doorbell-js HMAC the raw bytes Stripe, GitHub, Slack, Shopify, Clerk, and Svix actually signed. Not JSON.parse. Not JSON.stringify.</p>
+    <pre class="install"><code>npm i doorbell-js</code></pre>
+    <p>The Next.js App Router export <em>is</em> the route. Do not call <code>req.json()</code>.</p>
+    <pre><code>import { doorbell } from 'doorbell-js'
+
+export const POST = doorbell({
+  stripe: {
+    secret: process.env.STRIPE_WEBHOOK_SECRET,
+    on: {
+      'checkout.session.completed': async (event) => {
+        await fulfill(event.payload)
+      },
+    },
+  },
+})</code></pre>
+    <h2>Fix the error you pasted into Google</h2>
+    <ul>
+      <li><a href="./stripe.html">No signatures found matching the expected signature for payload</a></li>
+      <li><a href="./express.html">express.json() ate the Stripe or GitHub body</a></li>
+      <li><a href="./faq.html">Slack invalid_signature, Shopify HMAC, Clerk / Svix, Twilio URL</a></li>
+    </ul>
+    <h2>What it checks</h2>
+    <p>HMAC first, then the clock, the way stripe-node does. Missing headers still burn HMAC so that path is not faster. GitHub and Shopify do not get <code>event.type</code> from unsigned headers. Compare digest bytes, not hex strings.</p>
+    <p>Providers: Stripe, GitHub, Slack, Shopify, Svix, Clerk, Resend, Linear, Paddle, Meta, Twilio.</p>
+    <p>MIT. <a href="https://github.com/Hashim1999164/doorbell-js">Source and README</a>.</p>
+    <footer>Hashim Khan · doorbell-js · HMAC the raw bytes</footer>
+  </main>
+</body>
+</html>

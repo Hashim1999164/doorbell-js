@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Webhook signature FAQ | doorbell-js</title>
+  <meta name="description" content="FAQ: Stripe no signatures found, GitHub PAT vs webhook secret, Slack Signing Secret vs xoxb, Shopify HMAC, Clerk Svix, Linear webhookTimestamp, Twilio public URL.">
+  <link rel="canonical" href="https://hashim1999164.github.io/doorbell-js/faq.html">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="doorbell-js webhook signature FAQ">
+  <meta property="og:description" content="The errors people paste into Google, and which secret they actually wanted.">
+  <meta property="og:url" content="https://hashim1999164.github.io/doorbell-js/faq.html">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <nav><a href="./">doorbell-js</a> · <a href="./stripe.html">Stripe</a> · <a href="./express.html">express.json</a> · <a href="./faq.html">FAQ</a></nav>
+    <h1>Webhook signature FAQ</h1>
+    <h2>No signatures found matching the expected signature for payload</h2>
+    <p>Body was parsed, or the <code>whsec_</code> is the wrong one. <a href="./stripe.html">Stripe writeup</a>.</p>
+    <h2>GitHub webhook secret vs GITHUB_TOKEN</h2>
+    <p><code>X-Hub-Signature-256</code> uses the webhook Secret field. A PAT will never verify.</p>
+    <h2>Slack invalid_signature</h2>
+    <p>Signing Secret from Basic Information, plus both Slack headers. Not <code>xoxb-</code>.</p>
+    <h2>Shopify HMAC validation failed</h2>
+    <p>HMAC is the raw body only. Topic and triggered-at are not signed.</p>
+    <h2>Clerk / Svix / Resend</h2>
+    <p>Standard Webhooks. <code>whsec_</code> then base64 bytes. That is not Stripe’s <code>whsec_</code> math. Path the provider if you take more than one.</p>
+    <h2>Linear missing webhookTimestamp</h2>
+    <p>That field in the signed JSON is the replay clock. doorbell refuses a body without it.</p>
+    <h2>Twilio signature did not match</h2>
+    <p>Pass the public URL Twilio called, not <code>req.url</code> on localhost.</p>
+    <p><a href="https://github.com/Hashim1999164/doorbell-js/blob/main/docs/faq.md">Markdown FAQ</a> · <a href="https://github.com/Hashim1999164/doorbell-js">GitHub</a></p>
+    <footer>doorbell-js · FAQ</footer>
+  </main>
+</body>
+</html>

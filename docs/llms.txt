@@ -1,0 +1,18 @@
+# doorbell-js
+
+> Webhook signature verification for Node.js. HMAC-SHA256 over the raw request body for Stripe, GitHub, Slack, Shopify, Clerk, Svix, Resend, Linear, Paddle, Meta, and Twilio.
+
+npm i doorbell-js
+https://github.com/Hashim1999164/doorbell-js
+https://www.npmjs.com/package/doorbell-js
+
+Stripe signs timestamp + '.' + raw bytes. GitHub and Shopify HMAC the body only. Their event/topic headers are not signed. Do not JSON.parse before HMAC. express.json() is the usual footgun. The Next.js export const POST = doorbell({...}) is the route. Do not call req.json().
+
+## Docs
+
+- [README](https://github.com/Hashim1999164/doorbell-js#readme)
+- [Stripe constructEvent / no signatures found](https://github.com/Hashim1999164/doorbell-js/blob/main/docs/stripe-webhook-signature-nodejs.md)
+- [express.json raw body](https://github.com/Hashim1999164/doorbell-js/blob/main/docs/express-json-raw-body.md)
+- [GitHub X-Hub-Signature-256](https://github.com/Hashim1999164/doorbell-js/blob/main/docs/github-webhook-hmac-nodejs.md)
+- [FAQ](https://github.com/Hashim1999164/doorbell-js/blob/main/docs/faq.md)
+- [Site](https://hashim1999164.github.io/doorbell-js/)

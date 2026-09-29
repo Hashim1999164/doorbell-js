@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>express.json() breaks Stripe and GitHub webhook HMAC | doorbell-js</title>
+  <meta name="description" content="express.json and bodyParser parse the body before Stripe constructEvent or GitHub X-Hub-Signature-256. Keep the raw bytes with preserveRawBody or express.raw.">
+  <link rel="canonical" href="https://hashim1999164.github.io/doorbell-js/express.html">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="express.json() breaks webhook HMAC">
+  <meta property="og:description" content="Stripe and GitHub sign the exact bytes on the wire. JSON.parse then stringify is a different string.">
+  <meta property="og:url" content="https://hashim1999164.github.io/doorbell-js/express.html">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <nav><a href="./">doorbell-js</a> · <a href="./stripe.html">Stripe</a> · <a href="./express.html">express.json</a> · <a href="./faq.html">FAQ</a></nav>
+    <h1>express.json() breaks Stripe and GitHub webhook HMAC</h1>
+    <p class="lead"><code>express.json()</code>, <code>bodyParser.json()</code>, and Next.js <code>req.json()</code> turn the body into an object. The HMAC is over the bytes on the wire.</p>
+    <h2>What you see</h2>
+    <pre><code>No signatures found matching the expected signature for payload
+Are you passing the raw request body you received from Stripe?</code></pre>
+    <p>GitHub: <code>X-Hub-Signature-256</code> misses. Slack: <code>invalid_signature</code>.</p>
+    <h2>Keep json() for the rest of the app</h2>
+    <pre><code>import express from 'express'
+import { doorbell, preserveRawBody } from 'doorbell-js'
+
+const app = express()
+app.use(express.json({ verify: preserveRawBody }))
+app.post('/webhooks/stripe', doorbell({
+  stripe: { secret: process.env.STRIPE_WEBHOOK_SECRET, onAny: async () => {} },
+}).express)</code></pre>
+    <h2>Or isolate the route</h2>
+    <pre><code>app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), hooks.express)
+app.use(express.json())</code></pre>
+    <p>If <code>app.use(express.json())</code> is above the webhook, the raw parser never sees the bytes.</p>
+    <p><a href="./stripe.html">Stripe signature page</a> · <a href="https://github.com/Hashim1999164/doorbell-js/blob/main/docs/express-json-raw-body.md">Markdown</a></p>
+    <footer>doorbell-js · raw body · express.raw</footer>
+  </main>
+</body>
+</html>

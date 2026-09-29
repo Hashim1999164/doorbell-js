@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://hashim1999164.github.io/doorbell-js/sitemap.xml
