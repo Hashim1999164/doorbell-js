@@ -17,14 +17,27 @@ async function hmac(
   if (key.byteLength === 0) {
     throw new Error('HMAC key is empty')
   }
-  const cryptoKey = await globalThis.crypto.subtle.importKey(
+
+  try {
+    const node = await import('node:crypto')
+    const alg = hash === 'SHA-256' ? 'sha256' : 'sha1'
+    return new Uint8Array(node.createHmac(alg, Buffer.from(key)).update(data).digest())
+  } catch {
+    // workers / browsers
+  }
+
+  const subtle = globalThis.crypto?.subtle
+  if (!subtle) {
+    throw new Error('No HMAC implementation on this runtime')
+  }
+  const cryptoKey = await subtle.importKey(
     'raw',
     toArrayBuffer(key),
     { name: 'HMAC', hash },
     false,
     ['sign'],
   )
-  const sig = await globalThis.crypto.subtle.sign('HMAC', cryptoKey, toArrayBuffer(data))
+  const sig = await subtle.sign('HMAC', cryptoKey, toArrayBuffer(data))
   return new Uint8Array(sig)
 }
 
