@@ -80,13 +80,13 @@ Stripe-node only rejects events that are too old. A Stripe timestamp two minutes
 
 Slack, Svix, Clerk, Resend, Paddle, and Linear reject both too old and too new. Linear needs `webhookTimestamp` in the signed JSON. A timestamp from next week is how you stash a signed body and replay it when the clock catches up.
 
-If more than one provider sniffs the same request, doorbell refuses it. A proxy that tacks on `Stripe-Signature` next to a real GitHub hook will not silently verify as Stripe and fail the HMAC. Put the name in the path (`/webhooks/github`). Path wins over headers.
+If more than one provider sniffs the same request, doorbell refuses it. A proxy that tacks on `Stripe-Signature` next to a real GitHub hook will not silently verify as Stripe and fail the HMAC. Put the name in the path (`/webhooks/github`). Path wins over headers. A path with `.` or `..` (including `%2e%2e`) is refused. Express `originalUrl` can still carry those. `new URL` would turn `/webhooks/github/../stripe` into Stripe. The Fetch `Request` URL is already resolved, so this check is for the Express and Fastify paths.
 
 Shopify HMAC is the body only. `X-Shopify-Triggered-At` is not signed, so doorbell does not clock on it. An attacker who captured a valid body can set that header to now.
 
 GitHub HMAC is the body only. `X-GitHub-Delivery` and `X-GitHub-Event` are not signed. Doorbell keys GitHub/Shopify/Meta retries on a hash of the raw bytes, not those headers. If the signed JSON looks like a ping, push, issues, pull_request, or gollum, `event.type` comes from that JSON. Unknown GitHub shapes are type `github`. `on['member']` does not run on a captured wiki body. A delete body labelled create is refused.
 
-Shopify is the same trap. `X-Shopify-Topic` is not signed. An order body is type `orders`, not `orders/paid`. GDPR bodies with `orders_requested` / `orders_to_redact` / `shop_id`+`shop_domain` are `customers/data_request`, `customers/redact`, `shop/redact`. Other bodies are type `shopify`. `on['app/uninstalled']` does not run from that header. Use `on.orders`, `on.shopify`, or `onAny` and read the payload.
+Shopify is the same trap. `X-Shopify-Topic` is not signed. An order body is type `orders`, not `orders/paid`. GDPR bodies with `orders_requested` / `orders_to_redact` are those types. `shop/redact` is only when the JSON is exactly `shop_id` and `shop_domain`. Other bodies are type `shopify`. `on['app/uninstalled']` does not run from that header. Use `on.orders`, `on.shopify`, or `onAny` and read the payload.
 
 Stripe Connect: `event.account` is the `account` field on the signed JSON. `Stripe-Account` is not in the HMAC, so it is ignored.
 
@@ -100,7 +100,9 @@ Default window is 5 minutes. Fix NTP. Do not turn this off in production.
 
 Signature headers that contain a newline or that are bigger than 8KB are refused before parse. Sixteen v1 signatures is enough. More than that is someone burning CPU.
 
-Meta `hub.verify_token` is compared in constant time. Slack URL verification still waits for HMAC. There is no unsigned POST shortcut.
+Meta `hub.verify_token` is hashed, then compared in constant time, so a short guess is not a shorter compare. Slack URL verification still waits for HMAC. There is no unsigned POST shortcut.
+
+GitHub and Meta need `sha256=` on the signature header. Bare hex is refused. Standard Webhooks only uses `v1` signatures. A `v0` leftover is ignored, not treated as a MAC.
 
 ## Who can knock
 
@@ -112,7 +114,7 @@ Meta `hub.verify_token` is compared in constant time. Slack URL verification sti
 | Shopify | `X-Shopify-Hmac-Sha256` over the body. Topic is not signed. An order body is type `orders`. GDPR shapes come from the JSON. Other bodies are type `shopify`. |
 | Svix / Clerk / Resend | Standard Webhooks. Path required if you take more than one. Both-way clock. |
 | Linear, Paddle | Hex / `ts;h1`. Linear requires `webhookTimestamp` in the signed JSON. |
-| Meta | POST signed. GET `hub.challenge` needs `verifyToken` |
+| Meta | POST signed. Sniffs `X-Hub-Signature-256` without requiring the old sha1 header. GET `hub.challenge` needs `verifyToken` |
 | Twilio | Auth token plus the public URL Twilio called. Trailing slash on that URL is tried both ways. |
 
 ## What it will not do for you

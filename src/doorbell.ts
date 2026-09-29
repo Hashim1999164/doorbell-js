@@ -3,8 +3,8 @@ import { DoorbellError, missingSecretError, tooLargeError } from './errors.js'
 import { handshake } from './handshake.js'
 import { headerMap } from './headers.js'
 import { MemoryStore, type IdempotencyStore } from './idempotency.js'
-import { stringField } from './json.js'
-import { providerFromPath, providers, sniffHits } from './providers/index.js'
+import { hasOwn, stringField } from './json.js'
+import { pathHasDotSegments, providerFromPath, providers, sniffHits } from './providers/index.js'
 import { rawFromNodeRequest, readRequestBodyCapped } from './raw.js'
 import { lintSecret } from './secrets.js'
 import type { ProviderName, VerifiedEvent } from './providers/types.js'
@@ -159,6 +159,13 @@ export function doorbell(config: DoorbellConfig): Doorbell {
       return text(405, 'Use POST.')
     }
 
+    if (req.url && pathHasDotSegments(req.url)) {
+      throw new DoorbellError('Webhook path contains . or .. . Refusing to pick a provider from it.', {
+        code: 'bad_path',
+        hint: 'Put the provider in a plain path segment: /webhooks/stripe. Dot segments change which handler runs.',
+      })
+    }
+
     let name = providerFromPath(req.url, allowed)
     if (!name) {
       const hits = sniffHits(headers, allowed)
@@ -226,8 +233,8 @@ export function doorbell(config: DoorbellConfig): Doorbell {
       account: name === 'stripe' ? stringField(payload, 'account') : undefined,
     }
 
-    // GitHub ping is the signed body (zen), not X-GitHub-Event. That header is not in the HMAC.
-    if (name === 'github' && stringField(payload, 'zen')) {
+    // GitHub ping is the signed zen field, even if it is empty. That header is not in the HMAC.
+    if (name === 'github' && hasOwn(payload, 'zen')) {
       return json(200, { ok: true, ping: true })
     }
 

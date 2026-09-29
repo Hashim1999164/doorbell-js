@@ -1,4 +1,5 @@
 import { parseHex, utf8 } from './bytes.js'
+import { sha256 } from './hash.js'
 
 /**
  * Compare two byte strings without bailing on the first mismatch.
@@ -24,7 +25,8 @@ export function timingSafeEqualHex(expectedHex: string, providedHex: string): bo
 }
 
 export function timingSafeEqualText(a: string, b: string): boolean {
-  return timingSafeEqual(utf8(a), utf8(b))
+  // Hash first so a short guess is not a shorter compare than the real token.
+  return timingSafeEqual(sha256(utf8(a)), sha256(utf8(b)))
 }
 
 /**

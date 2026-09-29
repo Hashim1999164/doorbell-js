@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.10.0
+
+A path with `.` or `..` (including `%2e%2e`) is refused. `new URL` would turn `/webhooks/github/../stripe` into Stripe and run the wrong provider.
+
+Standard Webhooks only takes `v1` signatures. The leftover `v1` token and `v0` parts are not MACs. GitHub and Meta need `sha256=` on the header. Bare hex is refused.
+
+Meta sniffs sha256 without requiring the old sha1 header. The GET handshake hashes both tokens before compare so a short guess is not a shorter compare. GitHub ping is the `zen` key, even if the string is empty. Shopify `shop/redact` is only the two GDPR keys. Discussion comes from the signed JSON.
+
 ## 1.9.0
 
 Two signature header families on one request no longer pick the first sniff hit. Extra `Stripe-Signature` on a GitHub hook is ambiguous unless the path names the provider.

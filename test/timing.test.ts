@@ -36,6 +36,10 @@ describe('timingSafeEqualText', () => {
     expect(timingSafeEqualText('my-token', 'my-token')).toBe(true)
     expect(timingSafeEqualText('my-token', 'nope')).toBe(false)
   })
+
+  it('still rejects a short guess against a long token', () => {
+    expect(timingSafeEqualText('ab', 'abcdefghijklmnop')).toBe(false)
+  })
 })
 
 describe('parseBase64', () => {

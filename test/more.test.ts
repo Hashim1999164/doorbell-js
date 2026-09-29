@@ -4,7 +4,7 @@ import { doorbell } from '../src/doorbell.js'
 import { headerMap } from '../src/headers.js'
 import { MemoryStore } from '../src/idempotency.js'
 import { parseJsonBody, stringField } from '../src/json.js'
-import { signGitHub, signLinear, signPaddle, signShopify, signSlack, signStripe, signTwilio } from '../src/sign.js'
+import { signGitHub, signLinear, signPaddle, signShopify, signSlack, signStandard, signStripe, signTwilio } from '../src/sign.js'
 
 const NOW = () => 1_614_556_800_000
 
@@ -766,5 +766,261 @@ describe('1.9 signed fields and sniff', () => {
       } as RequestInit),
     )
     expect(res.status).toBe(200)
+  })
+})
+
+describe('1.10 path and signed versions', () => {
+  it('refuses a path with .. so it cannot switch providers', async () => {
+    const payload = '{"id":"evt_x","type":"ping"}'
+    const secret = 'whsec_x'
+    const ts = 1614556800
+    const header = await signStripe(payload, secret, ts)
+    let ran = false
+    const app = doorbell({
+      now: NOW,
+      stripe: {
+        secret,
+        onAny: async () => {
+          ran = true
+        },
+      },
+      github: { secret: 'g', onAny: async () => {} },
+    })
+    const res = await app.handle({
+      method: 'POST',
+      url: 'http://shop.test/webhooks/github/../stripe',
+      headers: headerMap({ 'stripe-signature': header }),
+      raw: utf8(payload),
+    })
+    expect(res.status).toBe(400)
+    expect(res.body).toMatch(/path contains/)
+    expect(ran).toBe(false)
+  })
+
+  it('refuses encoded dot segments too', async () => {
+    const payload = '{"id":"evt_x","type":"ping"}'
+    const secret = 'whsec_x'
+    const ts = 1614556800
+    const header = await signStripe(payload, secret, ts)
+    const app = doorbell({
+      now: NOW,
+      stripe: { secret, onAny: async () => {} },
+      github: { secret: 'g', onAny: async () => {} },
+    })
+    const res = await app.handle({
+      method: 'POST',
+      url: 'http://shop.test/webhooks/github/%2e%2e/stripe',
+      headers: headerMap({ 'stripe-signature': header }),
+      raw: utf8(payload),
+    })
+    expect(res.status).toBe(400)
+    expect(res.body).toMatch(/path contains/)
+  })
+
+  it('ignores Standard Webhooks v0 and still accepts v1', async () => {
+    const payload = '{"type":"email.sent","data":{"id":"1"}}'
+    const keyBytes = Buffer.from('secretkeysecretkeysecretke')
+    const secret = `whsec_${keyBytes.toString('base64')}`
+    const id = 'msg_v1v0'
+    const ts = 1614556800
+    const sig = await signStandard(payload, secret, id, ts)
+    const app = doorbell({
+      now: NOW,
+      svix: { secret, onAny: async () => {} },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/svix', {
+        method: 'POST',
+        headers: {
+          'svix-id': id,
+          'svix-timestamp': String(ts),
+          'svix-signature': `${sig} v0,dG90YWxseWZha2U=`,
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+  })
+
+  it('rejects a Standard Webhooks header that is only v0', async () => {
+    const payload = '{"type":"email.sent"}'
+    const keyBytes = Buffer.from('secretkeysecretkeysecretke')
+    const secret = `whsec_${keyBytes.toString('base64')}`
+    const app = doorbell({
+      now: NOW,
+      svix: { secret, onAny: async () => {} },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/svix', {
+        method: 'POST',
+        headers: {
+          'svix-id': 'msg_v0only',
+          'svix-timestamp': '1614556800',
+          'svix-signature': 'v0,dG90YWxseWZha2U=',
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(await res.text()).toMatch(/did not match/)
+  })
+
+  it('sniffs Meta from sha256 without the sha1 header', async () => {
+    const payload = '{"object":"page"}'
+    const secret = 'app_secret'
+    const sig = await signGitHub(payload, secret)
+    let ran = false
+    const app = doorbell({
+      meta: {
+        secret,
+        onAny: async () => {
+          ran = true
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks', {
+        method: 'POST',
+        headers: { 'x-hub-signature-256': sig },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(ran).toBe(true)
+  })
+
+  it('refuses a GitHub hex signature without sha256=', async () => {
+    const payload = '{"ref":"refs/heads/main"}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    const hex = sig.slice('sha256='.length)
+    const app = doorbell({
+      github: { secret, onAny: async () => {} },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'push',
+          'x-hub-signature-256': hex,
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(await res.text()).toMatch(/sha256=/)
+  })
+
+  it('answers GitHub ping from the zen key even when the string is empty', async () => {
+    const payload = '{"zen":""}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    const app = doorbell({
+      github: { secret, onAny: async () => {} },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'ping',
+          'x-hub-signature-256': sig,
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ ping: true })
+  })
+
+  it('runs discussion from the signed JSON', async () => {
+    const payload = '{"action":"created","discussion":{"id":1}}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    let ran = false
+    const app = doorbell({
+      github: {
+        secret,
+        on: {
+          'discussion.created': async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'discussion',
+          'x-hub-signature-256': sig,
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(ran).toBe(true)
+  })
+
+  it('does not call shop/redact on a body that only happens to have shop_id', async () => {
+    const payload = '{"shop_id":1,"shop_domain":"x.myshopify.com","name":"Store"}'
+    const secret = 'shopify_shared_secret'
+    const hmac = await signShopify(payload, secret)
+    let redact = false
+    let generic = false
+    const app = doorbell({
+      shopify: {
+        secret,
+        on: {
+          'shop/redact': async () => {
+            redact = true
+          },
+          shopify: async () => {
+            generic = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/shopify', {
+        method: 'POST',
+        headers: {
+          'x-shopify-hmac-sha256': hmac,
+          'x-shopify-topic': 'app/uninstalled',
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(redact).toBe(false)
+    expect(generic).toBe(true)
+  })
+
+  it('runs shop/redact when the signed JSON is only those two keys', async () => {
+    const payload = '{"shop_id":1,"shop_domain":"x.myshopify.com"}'
+    const secret = 'shopify_shared_secret'
+    const hmac = await signShopify(payload, secret)
+    let ran = false
+    const app = doorbell({
+      shopify: {
+        secret,
+        on: {
+          'shop/redact': async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/shopify', {
+        method: 'POST',
+        headers: {
+          'x-shopify-hmac-sha256': hmac,
+          'x-shopify-topic': 'shop/redact',
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(ran).toBe(true)
   })
 })

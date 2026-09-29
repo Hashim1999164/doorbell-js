@@ -44,16 +44,7 @@ function makeStandard(name: ProviderName, idHeader: string, tsHeader: string, si
         })
       }
       const toSign = prefixRaw(`${id}.${ts.trim()}.`, ctx.raw)
-      const candidates = capParts(
-        sig.split(/[,\s]+/).flatMap((part) => {
-          const trimmed = part.trim()
-          if (!trimmed) return []
-          if (trimmed.startsWith('v1,')) return [trimmed.slice(3)]
-          if (trimmed.startsWith('v1=')) return [trimmed.slice(3)]
-          return [trimmed]
-        }),
-        name,
-      )
+      const candidates = capParts(v1Signatures(sig), name)
       const ok = await matchAnyBase64Mac(keys, toSign, candidates)
       if (!ok) {
         throw new DoorbellError(`${name} signature did not match.`, {
@@ -82,6 +73,31 @@ export const svix = makeStandard('svix', 'svix-id', 'svix-timestamp', 'svix-sign
 export const clerk = makeStandard('clerk', 'svix-id', 'svix-timestamp', 'svix-signature')
 export const resend = makeStandard('resend', 'svix-id', 'svix-timestamp', 'svix-signature')
 export const standard = makeStandard('svix', 'webhook-id', 'webhook-timestamp', 'webhook-signature')
+
+/** Standard Webhooks is v1,<base64>. Ignore v0 and do not HMAC the leftover "v1" token. */
+function v1Signatures(header: string): string[] {
+  const parts = header.split(/[,\s]+/).map((p) => p.trim()).filter(Boolean)
+  const out: string[] = []
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]
+    if (!part) continue
+    if (part === 'v1') {
+      const next = parts[i + 1]
+      if (next && !/^v\d+$/.test(next)) {
+        out.push(next)
+        i += 1
+      }
+      continue
+    }
+    if (part.startsWith('v1=')) {
+      const rest = part.slice(3)
+      if (rest) out.push(rest)
+      continue
+    }
+    if (part.startsWith('v1,') && part.length > 3) out.push(part.slice(3))
+  }
+  return out
+}
 
 export function sniffSvix(headers: HeaderMap): boolean {
   return Boolean(header(headers, 'svix-signature') || header(headers, 'webhook-signature'))

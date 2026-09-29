@@ -14,8 +14,7 @@ export function sniffGitHub(headers: HeaderMap): boolean {
 function signatureHex(headerValue: string): string | undefined {
   const value = headerValue.trim()
   if (value.startsWith('sha256=')) return value.slice('sha256='.length)
-  if (value.startsWith('sha1=')) return undefined
-  return value
+  return undefined
 }
 
 export const github: Provider = {
@@ -45,7 +44,7 @@ export const github: Provider = {
     const hex = signatureHex(sig)
     if (!hex) {
       await burnHex(ctx.secrets, ctx.raw)
-      throw new DoorbellError('GitHub signature was sha1. That scheme is dead. Use sha256.', {
+      throw new DoorbellError('GitHub signature needs a sha256= prefix. sha1 is dead.', {
         code: 'bad_header',
       })
     }
@@ -91,6 +90,8 @@ function githubEventsForBody(payload: unknown): string[] | undefined {
   if (hasOwn(payload, 'starred_at')) return ['star']
   if (hasOwn(payload, 'pages')) return ['gollum']
   if (hasOwn(payload, 'comment') && hasOwn(payload, 'commit_id')) return ['commit_comment']
+  if (hasOwn(payload, 'discussion') && hasOwn(payload, 'comment')) return ['discussion_comment']
+  if (hasOwn(payload, 'discussion')) return ['discussion']
   if (hasOwn(payload, 'issue') && hasOwn(payload, 'comment')) return ['issue_comment']
   if (hasOwn(payload, 'issue')) return ['issues']
   if (hasOwn(payload, 'review') && hasOwn(payload, 'pull_request')) return ['pull_request_review']
@@ -105,8 +106,8 @@ function githubEventsForBody(payload: unknown): string[] | undefined {
 }
 
 export function sniffMeta(headers: HeaderMap): boolean {
-  if (header(headers, 'x-github-event')) return false
-  return Boolean(header(headers, 'x-hub-signature-256') && header(headers, 'x-hub-signature'))
+  if (header(headers, 'x-github-event') || header(headers, 'x-github-delivery')) return false
+  return Boolean(header(headers, 'x-hub-signature-256'))
 }
 
 export const meta: Provider = {

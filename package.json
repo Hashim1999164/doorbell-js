@@ -1,6 +1,6 @@
 {
   "name": "doorbell-js",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "HMAC the raw bytes. One handler for Stripe, GitHub, Slack, Shopify, and the Svix crowd.",
   "license": "MIT",
   "type": "module",

@@ -59,6 +59,30 @@ export function sniffProvider(headers: HeaderMap, allowed: Set<ProviderName>): P
   return undefined
 }
 
+/** Raw path, before URL resolution. `..` must not switch /webhooks/github into /webhooks/stripe. */
+export function pathHasDotSegments(url: string): boolean {
+  let path = url.trim()
+  const host = path.match(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^/?#]*/)
+  if (host) path = path.slice(host[0].length)
+  const cut = path.search(/[?#]/)
+  if (cut !== -1) path = path.slice(0, cut)
+  for (const part of path.split('/')) {
+    if (!part) continue
+    let decoded = part
+    for (let i = 0; i < 4; i++) {
+      try {
+        const next = decodeURIComponent(decoded.replace(/\+/g, '%20'))
+        if (next === decoded) break
+        decoded = next
+      } catch {
+        break
+      }
+    }
+    if (decoded === '.' || decoded === '..') return true
+  }
+  return false
+}
+
 export function providerFromPath(url: string | undefined, allowed: Set<ProviderName>): ProviderName | undefined {
   if (!url) return undefined
   let path = url
