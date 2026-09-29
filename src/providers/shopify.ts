@@ -55,13 +55,23 @@ export function shopifyTopicMatchesBody(topic: string, payload: unknown): boolea
   const family = shopifyFamilyForBody(payload)
   if (family === 'orders') return t.startsWith('orders/') || t.startsWith('checkouts/')
   if (family === 'products') return t.startsWith('products/')
+  if (family === 'customers/data_request' || family === 'customers/redact' || family === 'shop/redact') {
+    return t === family
+  }
   return true
 }
 
-function shopifyFamilyForBody(payload: unknown): 'orders' | 'products' | undefined {
+function shopifyFamilyForBody(
+  payload: unknown,
+): 'orders' | 'products' | 'customers/data_request' | 'customers/redact' | 'shop/redact' | undefined {
   if (hasOwn(payload, 'line_items') || hasOwn(payload, 'order_number') || hasOwn(payload, 'checkout_id')) {
     return 'orders'
   }
   if (hasOwn(payload, 'variants') || hasOwn(payload, 'product_type')) return 'products'
+  if (hasOwn(payload, 'orders_requested')) return 'customers/data_request'
+  if (hasOwn(payload, 'orders_to_redact')) return 'customers/redact'
+  if (hasOwn(payload, 'shop_id') && hasOwn(payload, 'shop_domain') && !hasOwn(payload, 'customer')) {
+    return 'shop/redact'
+  }
   return undefined
 }

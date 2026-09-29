@@ -60,7 +60,8 @@ export async function readRequestBodyCapped(req: Request, maxBodyBytes: number):
       }
       throw tooLargeError(total, maxBodyBytes)
     }
-    chunks.push(value)
+    // Stream implementations may reuse the chunk buffer. Copy before the next read.
+    chunks.push(copyBytes(value))
   }
   return concatBytes(chunks)
 }

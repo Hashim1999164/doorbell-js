@@ -41,17 +41,21 @@ export const linear: Provider = {
     } catch {
       timestampSec = undefined
     }
-    if (timestampSec != null) {
-      const freshness = assertFresh(timestampSec, {
-        toleranceSec: ctx.toleranceSec,
-        now: ctx.now,
-        future: 'reject',
+    if (timestampSec == null) {
+      throw new DoorbellError('Linear body has no webhookTimestamp. That field is the replay clock.', {
+        code: 'replay',
+        hint: 'Linear signs the JSON. If webhookTimestamp is missing, a captured body can be posted forever.',
       })
-      if (freshness !== 'ok') {
-        throw new DoorbellError('Linear webhookTimestamp is outside the allowed window.', {
-          code: 'replay',
-        })
-      }
+    }
+    const freshness = assertFresh(timestampSec, {
+      toleranceSec: ctx.toleranceSec,
+      now: ctx.now,
+      future: 'reject',
+    })
+    if (freshness !== 'ok') {
+      throw new DoorbellError('Linear webhookTimestamp is outside the allowed window.', {
+        code: 'replay',
+      })
     }
     return { timestampSec }
   },

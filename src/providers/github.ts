@@ -90,6 +90,7 @@ function githubEventsForBody(payload: unknown): string[] | undefined {
   if (hasOwn(payload, 'forkee')) return ['fork']
   if (hasOwn(payload, 'starred_at')) return ['star']
   if (hasOwn(payload, 'pages')) return ['gollum']
+  if (hasOwn(payload, 'comment') && hasOwn(payload, 'commit_id')) return ['commit_comment']
   if (hasOwn(payload, 'issue') && hasOwn(payload, 'comment')) return ['issue_comment']
   if (hasOwn(payload, 'issue')) return ['issues']
   if (hasOwn(payload, 'review') && hasOwn(payload, 'pull_request')) return ['pull_request_review']

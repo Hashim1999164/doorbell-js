@@ -4,7 +4,7 @@ import { handshake } from './handshake.js'
 import { headerMap } from './headers.js'
 import { MemoryStore, type IdempotencyStore } from './idempotency.js'
 import { stringField } from './json.js'
-import { providerFromPath, providers, sniffProvider } from './providers/index.js'
+import { providerFromPath, providers, sniffHits } from './providers/index.js'
 import { rawFromNodeRequest, readRequestBodyCapped } from './raw.js'
 import { lintSecret } from './secrets.js'
 import type { ProviderName, VerifiedEvent } from './providers/types.js'
@@ -159,18 +159,30 @@ export function doorbell(config: DoorbellConfig): Doorbell {
       return text(405, 'Use POST.')
     }
 
-    let name = providerFromPath(req.url, allowed) ?? sniffProvider(headers, allowed)
+    let name = providerFromPath(req.url, allowed)
     if (!name) {
-      const svixConfigured = [...allowed].filter((n) => n === 'svix' || n === 'clerk' || n === 'resend')
-      if (svixConfigured.length > 1 && (headers.get('svix-signature') || headers.get('webhook-signature'))) {
+      const hits = sniffHits(headers, allowed)
+      if (hits.length === 1) {
+        name = hits[0]
+      } else if (hits.length === 2 && hits.includes('github') && hits.includes('meta')) {
+        name = 'github'
+      } else if (hits.length > 1) {
+        const svixFamily = hits.filter((n) => n === 'svix' || n === 'clerk' || n === 'resend')
+        const svixOnly = svixFamily.length === hits.length
         throw new DoorbellError(
-          'Clerk, Resend, and Svix look the same on the wire.',
+          svixOnly
+            ? 'Clerk, Resend, and Svix look the same on the wire.'
+            : 'Those headers match more than one provider.',
           {
             code: 'ambiguous_provider',
-            hint: 'Put the provider in the path: /webhooks/clerk or /webhooks/resend.',
+            hint: svixOnly
+              ? 'Put the provider in the path: /webhooks/clerk or /webhooks/resend.'
+              : `Saw ${hits.join(', ')}. Put the name in the URL (/webhooks/${hits[0] ?? 'stripe'}). Extra signature headers from a proxy will not pick a winner.`,
           },
         )
       }
+    }
+    if (!name) {
       throw new DoorbellError('Could not tell who knocked.', {
         code: 'unknown_provider',
         hint: `Configured: ${[...allowed].join(', ')}. Put the name in the URL (/webhooks/stripe) or send the usual signature headers.`,
@@ -210,6 +222,8 @@ export function doorbell(config: DoorbellConfig): Doorbell {
       raw,
       timestampSec: verified.timestampSec,
       signal: ac.signal,
+      // Stripe-Account is not in the HMAC. Connect account id lives on the signed JSON.
+      account: name === 'stripe' ? stringField(payload, 'account') : undefined,
     }
 
     // GitHub ping is the signed body (zen), not X-GitHub-Event. That header is not in the HMAC.

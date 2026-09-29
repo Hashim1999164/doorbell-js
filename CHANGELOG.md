@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.0
+
+Two signature header families on one request no longer pick the first sniff hit. Extra `Stripe-Signature` on a GitHub hook is ambiguous unless the path names the provider.
+
+Linear without `webhookTimestamp` in the signed JSON is refused. That field is the replay clock. Missing used to mean forever.
+
+Slack `event_callback` takes `event.type` from the signed inner object. Shopify GDPR shapes (`orders_requested`, `orders_to_redact`, shop_id + shop_domain) take type from the JSON. Stripe Connect `event.account` is the signed `account` field, not `Stripe-Account`. Fetch copies each stream chunk so a reused buffer cannot rewrite the body after HMAC.
+
+GitHub `commit_comment` comes from `commit_id` in the JSON.
+
 ## 1.8.0
 
 Unknown GitHub and Shopify shapes no longer take `event.type` from unsigned headers. A captured wiki body labelled `member` does not run `on.member`. A captured uninstall body labelled `customers/data_request` does not run that handler. Those are type `github` / `shopify`. Gollum is inferred from `pages`.

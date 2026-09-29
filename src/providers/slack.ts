@@ -4,7 +4,7 @@ import { DoorbellError, secretHint } from '../errors.js'
 import { header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
 import { bodyFingerprint } from '../hash.js'
-import { parseJsonBody, stringField } from '../json.js'
+import { hasOwn, parseJsonBody, stringField } from '../json.js'
 import { prefixRaw } from '../wire.js'
 import type { HeaderMap } from '../headers.js'
 import type { Provider } from './types.js'
@@ -26,7 +26,11 @@ export const slack: Provider = {
     )
   },
   eventType(_headers, payload) {
-    return stringField(payload, 'type') ?? 'unknown'
+    const outer = stringField(payload, 'type') ?? 'unknown'
+    // Inner event.type is in the signed JSON. X-Slack-* headers are not how we name it.
+    if (outer !== 'event_callback' || !hasOwn(payload, 'event')) return outer
+    const inner = stringField((payload as { event: unknown }).event, 'type')
+    return inner ? `${outer}.${inner}` : outer
   },
   async verify(ctx) {
     const sig = sigHeader(ctx.headers, 'x-slack-signature', 'Slack')

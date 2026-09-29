@@ -4,7 +4,7 @@ import { doorbell } from '../src/doorbell.js'
 import { headerMap } from '../src/headers.js'
 import { MemoryStore } from '../src/idempotency.js'
 import { parseJsonBody, stringField } from '../src/json.js'
-import { signGitHub, signLinear, signPaddle, signShopify, signStripe, signTwilio } from '../src/sign.js'
+import { signGitHub, signLinear, signPaddle, signShopify, signSlack, signStripe, signTwilio } from '../src/sign.js'
 
 const NOW = () => 1_614_556_800_000
 
@@ -249,10 +249,11 @@ describe('shopify linear paddle', () => {
   })
 
   it('verifies linear hex hmac', async () => {
-    const payload = '{"action":"create","type":"Issue"}'
+    const payload = '{"action":"create","type":"Issue","webhookTimestamp":1614556800}'
     const secret = 'linear_webhook_secret'
     const sig = await signLinear(payload, secret)
     const app = doorbell({
+      now: NOW,
       linear: { secret, onAny: async () => {} },
     })
     const res = await app(
@@ -524,5 +525,246 @@ describe('header arrays', () => {
       raw: utf8(payload),
     })
     expect(result.status).toBe(200)
+  })
+})
+
+describe('1.9 signed fields and sniff', () => {
+  it('refuses extra signature headers instead of picking the first sniff hit', async () => {
+    const payload = '{"ref":"refs/heads/main"}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    const app = doorbell({
+      stripe: { secret: 'whsec_other', onAny: async () => {} },
+      github: { secret, onAny: async () => {} },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'push',
+          'x-hub-signature-256': sig,
+          'stripe-signature': 't=1,v1=deadbeef',
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(await res.text()).toMatch(/more than one provider/)
+  })
+
+  it('still uses the path when extra signature headers are present', async () => {
+    const payload = '{"ref":"refs/heads/main"}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    let ran = false
+    const app = doorbell({
+      stripe: { secret: 'whsec_other', onAny: async () => {} },
+      github: {
+        secret,
+        on: {
+          push: async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'push',
+          'x-hub-signature-256': sig,
+          'stripe-signature': 't=1,v1=deadbeef',
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(ran).toBe(true)
+  })
+
+  it('runs Shopify customers/data_request from the signed JSON, not a spoofed topic', async () => {
+    const payload = '{"shop_id":1,"shop_domain":"x.myshopify.com","orders_requested":[1],"customer":{"id":2}}'
+    const secret = 'shopify_shared_secret'
+    const hmac = await signShopify(payload, secret)
+    let ran = false
+    const app = doorbell({
+      shopify: {
+        secret,
+        on: {
+          'customers/data_request': async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const good = await app(
+      new Request('http://shop.test/webhooks/shopify', {
+        method: 'POST',
+        headers: {
+          'x-shopify-hmac-sha256': hmac,
+          'x-shopify-topic': 'customers/data_request',
+        },
+        body: payload,
+      }),
+    )
+    expect(good.status).toBe(200)
+    expect(ran).toBe(true)
+    ran = false
+    const spoof = await app(
+      new Request('http://shop.test/webhooks/shopify', {
+        method: 'POST',
+        headers: {
+          'x-shopify-hmac-sha256': hmac,
+          'x-shopify-topic': 'app/uninstalled',
+        },
+        body: payload,
+      }),
+    )
+    expect(spoof.status).toBe(400)
+    expect(ran).toBe(false)
+  })
+
+  it('rejects a signed Linear body with no webhookTimestamp', async () => {
+    const payload = '{"action":"create","type":"Issue","webhookId":"wh_1"}'
+    const secret = 'linear_webhook_secret'
+    const sig = await signLinear(payload, secret)
+    const app = doorbell({
+      now: NOW,
+      linear: { secret, onAny: async () => {} },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/linear', {
+        method: 'POST',
+        headers: { 'linear-signature': sig },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(400)
+    expect(await res.text()).toMatch(/webhookTimestamp/)
+  })
+
+  it('names Slack event_callback from the signed inner event type', async () => {
+    const payload = '{"type":"event_callback","event_id":"Ev1","event":{"type":"message","text":"hi"}}'
+    const secret = 'slack_signing_secret'
+    const ts = 1614556800
+    const sig = await signSlack(payload, secret, ts)
+    let type = ''
+    const app = doorbell({
+      now: NOW,
+      slack: {
+        secret,
+        on: {
+          'event_callback.message': async (event) => {
+            type = event.type
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/slack', {
+        method: 'POST',
+        headers: {
+          'x-slack-signature': sig,
+          'x-slack-request-timestamp': String(ts),
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(type).toBe('event_callback.message')
+  })
+
+  it('takes Stripe Connect account from the signed JSON, not Stripe-Account', async () => {
+    const payload = '{"id":"evt_connect","type":"ping","account":"acct_signed"}'
+    const secret = 'whsec_test_secret'
+    const ts = 1614556800
+    const header = await signStripe(payload, secret, ts)
+    let account: string | undefined
+    const app = doorbell({
+      now: NOW,
+      stripe: {
+        secret,
+        onAny: async (event) => {
+          account = event.account
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/stripe', {
+        method: 'POST',
+        headers: {
+          'stripe-signature': header,
+          'stripe-account': 'acct_spoofed',
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(account).toBe('acct_signed')
+  })
+
+  it('runs commit_comment from commit_id in the signed JSON', async () => {
+    const payload = '{"action":"created","comment":{"id":1},"commit_id":"abc"}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    let ran = false
+    const app = doorbell({
+      github: {
+        secret,
+        on: {
+          'commit_comment.created': async () => {
+            ran = true
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'commit_comment',
+          'x-hub-signature-256': sig,
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(ran).toBe(true)
+  })
+
+  it('copies fetch chunks so a reused stream buffer cannot rewrite the body', async () => {
+    const payload = '{"id":"evt_reuse","type":"ping"}'
+    const secret = 'whsec_test_secret'
+    const ts = 1614556800
+    const header = await signStripe(payload, secret, ts)
+    const encoded = new TextEncoder().encode(payload)
+    const shared = new Uint8Array(encoded.byteLength)
+    let step = 0
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (step === 0) {
+          shared.set(encoded)
+          controller.enqueue(shared)
+          step = 1
+          return
+        }
+        shared.fill(0)
+        controller.close()
+      },
+    })
+    const app = doorbell({
+      now: NOW,
+      stripe: { secret, onAny: async () => {} },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/stripe', {
+        method: 'POST',
+        headers: { 'stripe-signature': header, 'content-type': 'application/json' },
+        body: stream,
+        duplex: 'half',
+      } as RequestInit),
+    )
+    expect(res.status).toBe(200)
   })
 })

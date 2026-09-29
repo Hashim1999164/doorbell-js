@@ -78,13 +78,19 @@ HMAC first, then the clock. stripe-node does it that way. A wrong secret on an o
 
 Stripe-node only rejects events that are too old. A Stripe timestamp two minutes in the future still verifies. doorbell matches that, because your handler should not disagree with `constructEvent`.
 
-Slack, Svix, Clerk, Resend, Paddle, and Linear (when `webhookTimestamp` is in the signed JSON) reject both too old and too new. A timestamp from next week is how you stash a signed body and replay it when the clock catches up.
+Slack, Svix, Clerk, Resend, Paddle, and Linear reject both too old and too new. Linear needs `webhookTimestamp` in the signed JSON. A timestamp from next week is how you stash a signed body and replay it when the clock catches up.
+
+If more than one provider sniffs the same request, doorbell refuses it. A proxy that tacks on `Stripe-Signature` next to a real GitHub hook will not silently verify as Stripe and fail the HMAC. Put the name in the path (`/webhooks/github`). Path wins over headers.
 
 Shopify HMAC is the body only. `X-Shopify-Triggered-At` is not signed, so doorbell does not clock on it. An attacker who captured a valid body can set that header to now.
 
 GitHub HMAC is the body only. `X-GitHub-Delivery` and `X-GitHub-Event` are not signed. Doorbell keys GitHub/Shopify/Meta retries on a hash of the raw bytes, not those headers. If the signed JSON looks like a ping, push, issues, pull_request, or gollum, `event.type` comes from that JSON. Unknown GitHub shapes are type `github`. `on['member']` does not run on a captured wiki body. A delete body labelled create is refused.
 
-Shopify is the same trap. `X-Shopify-Topic` is not signed. An order body is type `orders`, not `orders/paid`. Unknown Shopify bodies are type `shopify`. `on['app/uninstalled']` does not run from that header. Use `on.orders`, `on.shopify`, or `onAny` and read the payload.
+Shopify is the same trap. `X-Shopify-Topic` is not signed. An order body is type `orders`, not `orders/paid`. GDPR bodies with `orders_requested` / `orders_to_redact` / `shop_id`+`shop_domain` are `customers/data_request`, `customers/redact`, `shop/redact`. Other bodies are type `shopify`. `on['app/uninstalled']` does not run from that header. Use `on.orders`, `on.shopify`, or `onAny` and read the payload.
+
+Stripe Connect: `event.account` is the `account` field on the signed JSON. `Stripe-Account` is not in the HMAC, so it is ignored.
+
+Slack `event_callback` is typed from the inner `event.type` in the JSON (`event_callback.message`). That inner object is signed. The Slack retry headers are not.
 
 A missing signature header still runs HMAC, so that path is not faster than a bad one.
 
@@ -102,10 +108,10 @@ Meta `hub.verify_token` is compared in constant time. Slack URL verification sti
 | --- | --- |
 | Stripe | Endpoint signing secret. Not `sk_live_`. Future timestamps allowed, old ones not. |
 | GitHub | Webhook Secret field. Ping is the signed `zen` field. Known shapes take `event.type` from the JSON. Unknown shapes are type `github`. Not a PAT. |
-| Slack | Signing Secret. URL verification is answered after HMAC. Not `xoxb-`. |
-| Shopify | `X-Shopify-Hmac-Sha256` over the body. Topic is not signed. An order body is type `orders`. Other bodies are type `shopify`. |
+| Slack | Signing Secret. URL verification is answered after HMAC. `event_callback.message` comes from the signed inner event. Not `xoxb-`. |
+| Shopify | `X-Shopify-Hmac-Sha256` over the body. Topic is not signed. An order body is type `orders`. GDPR shapes come from the JSON. Other bodies are type `shopify`. |
 | Svix / Clerk / Resend | Standard Webhooks. Path required if you take more than one. Both-way clock. |
-| Linear, Paddle | Hex / `ts;h1`. Linear also checks `webhookTimestamp` when it is present. |
+| Linear, Paddle | Hex / `ts;h1`. Linear requires `webhookTimestamp` in the signed JSON. |
 | Meta | POST signed. GET `hub.challenge` needs `verifyToken` |
 | Twilio | Auth token plus the public URL Twilio called. Trailing slash on that URL is tried both ways. |
 
@@ -117,7 +123,7 @@ A handler crash returns 500 so the sender retries.
 
 Same signed body twice returns 200 and skips the work. For Stripe that is `event.id`. For GitHub and Shopify it is a hash of the bytes, because their id headers are unsigned. Two copies at once wait on the first one. A stuck inflight claim expires after a minute so the next delivery is not wedged. If this process is still running that work, the slot stays pinned until it finishes. Timeout plus one minute is not enough if the handler is slower than that.
 
-Default body cap is 5MB. The fetch path stops reading once the cap is hit, so a 50MB POST is not fully buffered then rejected. A lying Content-Length does not 413 a body that still fits. `handlerTimeoutMs` returns 500 so the sender retries. It does not abort the handler. Abort after a write is how a late throw drops inflight and Stripe fulfills twice. The inflight slot stays until that work actually finishes. If it later succeeds, the retry is a duplicate. If it later throws, the retry can run.
+Default body cap is 5MB. The fetch path stops reading once the cap is hit, so a 50MB POST is not fully buffered then rejected. Each stream chunk is copied, because some runtimes reuse the same Uint8Array for the next read. A lying Content-Length does not 413 a body that still fits. `handlerTimeoutMs` returns 500 so the sender retries. It does not abort the handler. Abort after a write is how a late throw drops inflight and Stripe fulfills twice. The inflight slot stays until that work actually finishes. If it later succeeds, the retry is a duplicate. If it later throws, the retry can run.
 
 ## Tests
 

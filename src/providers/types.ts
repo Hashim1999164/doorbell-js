@@ -22,6 +22,8 @@ export type VerifiedEvent = {
   raw: Uint8Array
   timestampSec: number | undefined
   signal: AbortSignal
+  /** Stripe Connect account id from the signed JSON. Not the unsigned Stripe-Account header. */
+  account: string | undefined
 }
 
 export type VerifyCtx = {
