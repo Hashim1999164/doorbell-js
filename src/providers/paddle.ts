@@ -1,9 +1,9 @@
-import { fromUtf8, utf8 } from '../bytes.js'
 import { assertFresh } from '../clock.js'
 import { DoorbellError } from '../errors.js'
 import { header } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
 import { parseJsonBody, stringField } from '../json.js'
+import { prefixRaw } from '../wire.js'
 import type { HeaderMap } from '../headers.js'
 import type { Provider } from './types.js'
 
@@ -46,7 +46,7 @@ export const paddle: Provider = {
     if (freshness !== 'ok') {
       throw new DoorbellError('Paddle timestamp is outside the allowed window.', { code: 'replay' })
     }
-    const signed = utf8(`${parsed.ts}:${fromUtf8(ctx.raw)}`)
+    const signed = prefixRaw(`${parsed.ts}:`, ctx.raw)
     const ok = await matchAnyHexMac(ctx.secrets, signed, parsed.h1)
     if (!ok) {
       throw new DoorbellError('Paddle signature did not match.', { code: 'bad_signature' })

@@ -29,13 +29,15 @@ That function *is* the route. Do not call `req.json()`. The whole point is the r
 
 ## Express
 
-Express will eat the body if you let it. This route needs `express.raw`.
+If `express.json()` already runs for the rest of the app, keep the bytes:
 
 ```js
 import express from 'express'
-import { doorbell } from 'doorbell-js'
+import { doorbell, preserveRawBody } from 'doorbell-js'
 
 const app = express()
+app.use(express.json({ verify: preserveRawBody }))
+
 const hooks = doorbell({
   github: {
     secret: process.env.GITHUB_WEBHOOK_SECRET,
@@ -47,41 +49,47 @@ const hooks = doorbell({
   },
 })
 
-app.post(
-  '/webhooks/github',
-  express.raw({ type: 'application/json' }),
-  hooks.express,
-)
+app.post('/webhooks/github', hooks.express)
 ```
 
-If you put `express.json()` first, doorbell will tell you. In English.
+Or give that route `express.raw({ type: 'application/json' })` and skip the global parser.
+
+If you parsed the body and did not keep the bytes, doorbell tells you. In English.
+
+## The part people get wrong
+
+Stripe signs `timestamp + '.' + raw bytes`.
+
+Not the JSON object. Not `JSON.stringify(JSON.parse(body))`. Not a UTF-8 round trip of those bytes.
+
+If a proxy or `express.json()` rewrites whitespace, the seal check fails forever and you will think the secret is wrong.
+
+`whsec_` is also not one thing. Stripe uses the whole string as the HMAC key. Svix / Clerk / Resend strip `whsec_` and base64-decode the rest. Same prefix, different math. Mix them up and every request looks forged.
 
 ## Who can knock
 
 | Provider | Notes |
 | --- | --- |
-| Stripe | `whsec_...` is the HMAC key as text. Not the API key. |
-| GitHub | Secret from the webhook settings. Ping is answered for you. |
-| Slack | Signing secret, not the bot token. URL verification is answered for you. |
-| Shopify | HMAC in `X-Shopify-Hmac-Sha256` |
-| Svix / Clerk / Resend | Standard Webhooks. Secret is `whsec_` plus base64 key bytes. Different from Stripe. |
-| Linear, Paddle | Hex / `ts;h1` as their docs say |
-| Meta | POST is signed. GET `hub.challenge` needs `verifyToken` |
-| Twilio | Needs the public URL Twilio called |
-
-Put the name in the path (`/webhooks/stripe`) or send the usual headers and doorbell will sniff.
-
-Clerk and Resend look identical on the wire. If you take both, use the path.
+| Stripe | Endpoint signing secret. Not `sk_live_`. |
+| GitHub | Webhook Secret field. Ping is answered. Not a PAT. |
+| Slack | Signing Secret. URL verification is answered. Not `xoxb-`. |
+| Shopify | `X-Shopify-Hmac-Sha256` |
+| Svix / Clerk / Resend | Standard Webhooks. Path required if you take more than one. |
+| Linear, Paddle | Hex / `ts;h1` |
+| Meta | POST signed. GET `hub.challenge` needs `verifyToken` |
+| Twilio | Auth token plus the public URL Twilio called |
 
 ## What it will not do for you
 
-It will not 500 on an event type you did not subscribe to. Stripe retries 5xx. You would get a week of `customer.updated` noise. Unknown types return 200.
+Unknown event types return 200. Stripe retries 5xx. You do not want a week of `customer.updated`.
 
-It will not 200 on a handler crash. That one *should* retry.
+A handler crash returns 500 so the sender retries.
 
-Same event id twice returns 200 and skips the handler.
+Same event id twice returns 200 and skips the work. Two copies at once wait on the first one.
 
 Default replay window is 5 minutes.
+
+Default body cap is 5MB. A stuck handler can be cut off with `handlerTimeoutMs`.
 
 ## Tests
 

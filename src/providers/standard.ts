@@ -1,10 +1,10 @@
-import { fromUtf8, standardWebhookKey, utf8 } from '../bytes.js'
+import { standardWebhookKey } from '../bytes.js'
 import { assertFresh } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
 import { header } from '../headers.js'
-import { hmacSha256, timingSafeEqual } from '../hmac.js'
+import { matchAnyBase64Mac } from '../hmac.js'
 import { parseJsonBody, stringField } from '../json.js'
-import { parseBase64 } from '../bytes.js'
+import { prefixRaw } from '../wire.js'
 import type { HeaderMap } from '../headers.js'
 import type { Provider, ProviderName, VerifyCtx } from './types.js'
 
@@ -36,7 +36,7 @@ function makeStandard(name: ProviderName, idHeader: string, tsHeader: string, si
       if (freshness !== 'ok') {
         throw new DoorbellError(`${name} timestamp is outside the allowed window.`, { code: 'replay' })
       }
-      const toSign = utf8(`${id}.${timestamp}.${fromUtf8(ctx.raw)}`)
+      const toSign = prefixRaw(`${id}.${timestamp}.`, ctx.raw)
       const keys = ctx.secretStrings.map((s) => {
         try {
           return standardWebhookKey(s)
@@ -47,7 +47,6 @@ function makeStandard(name: ProviderName, idHeader: string, tsHeader: string, si
           })
         }
       })
-      const expectedMacs = await Promise.all(keys.map((key) => hmacSha256(key, toSign)))
       const candidates = sig.split(/[,\s]+/).flatMap((part) => {
         const trimmed = part.trim()
         if (!trimmed) return []
@@ -55,14 +54,7 @@ function makeStandard(name: ProviderName, idHeader: string, tsHeader: string, si
         if (trimmed.startsWith('v1=')) return [trimmed.slice(3)]
         return [trimmed]
       })
-      let ok = false
-      for (const mac of expectedMacs) {
-        for (const candidate of candidates) {
-          const provided = parseBase64(candidate)
-          if (!provided) continue
-          if (timingSafeEqual(mac, provided)) ok = true
-        }
-      }
+      const ok = await matchAnyBase64Mac(keys, toSign, candidates)
       if (!ok) {
         throw new DoorbellError(`${name} signature did not match.`, {
           code: 'bad_signature',

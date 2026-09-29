@@ -1,8 +1,9 @@
-import { fromUtf8, utf8 } from '../bytes.js'
 import { assertFresh } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
 import { header } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
+import { parseJsonBody } from '../json.js'
+import { prefixRaw } from '../wire.js'
 import type { HeaderMap } from '../headers.js'
 import type { Provider, VerifyCtx } from './types.js'
 
@@ -27,9 +28,7 @@ export function sniffStripe(headers: HeaderMap): boolean {
 export const stripe: Provider = {
   name: 'stripe',
   sniff: sniffStripe,
-  parse(raw) {
-    return jsonBody(raw)
-  },
+  parse: parseJsonBody,
   eventId(_headers, payload) {
     if (payload && typeof payload === 'object' && 'id' in payload && typeof payload.id === 'string') {
       return payload.id
@@ -69,7 +68,7 @@ export const stripe: Provider = {
         },
       )
     }
-    const signed = utf8(`${timestamp}.${fromUtf8(ctx.raw)}`)
+    const signed = prefixRaw(`${timestamp}.`, ctx.raw)
     const ok = await matchAnyHexMac(ctx.secrets, signed, signatures)
     if (!ok) {
       throw stripeMismatch(ctx)
@@ -79,29 +78,17 @@ export const stripe: Provider = {
 }
 
 function stripeMismatch(ctx: VerifyCtx): DoorbellError {
-  const looksParsed = ctx.raw.byteLength > 0 && false
-  void looksParsed
-  const whitespace = ctx.secretStrings.some((s) => s.trim() !== s || /\s/.test(s))
+  const whitespace = ctx.secretStrings.some((s) => /\s/.test(s))
   return new DoorbellError('Stripe signature did not match.', {
     code: 'bad_signature',
     hint: [
       secretHint('stripe'),
       whitespace ? 'Your secret has whitespace in it. That is usually a leftover newline in .env.' : '',
-      'Also: the body must be the exact bytes Stripe signed. JSON.stringify of a parsed object is not the same thing.',
+      'The HMAC is over the raw bytes after t=timestamp. Decoding JSON and stringifying it again will not match.',
     ]
       .filter(Boolean)
       .join('\n'),
   })
-}
-
-function jsonBody(raw: Uint8Array): unknown {
-  const text = fromUtf8(raw)
-  if (text.length === 0) return {}
-  try {
-    return JSON.parse(text) as unknown
-  } catch (cause) {
-    throw new DoorbellError('Body is not JSON.', { code: 'bad_json', cause })
-  }
 }
 
 function fallbackId(seed: string): string {

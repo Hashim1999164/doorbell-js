@@ -2,8 +2,7 @@ import { parseHex, utf8 } from './bytes.js'
 
 /**
  * Compare two byte strings without bailing on the first mismatch.
- * Length still leaks a little (we walk the longer one). HMAC outputs are fixed size,
- * so callers should compare digests, not the original header strings.
+ * HMAC outputs are fixed size. Compare those, not the header text.
  */
 export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
   const len = Math.max(a.byteLength, b.byteLength, 1)
@@ -22,4 +21,22 @@ export function timingSafeEqualHex(expectedHex: string, providedHex: string): bo
     return false
   }
   return timingSafeEqual(expected, provided)
+}
+
+/**
+ * Compare every expected digest with every provided digest.
+ * Invalid / wrong-length candidates still get a dummy compare so we do not
+ * return faster on "this is not even hex".
+ */
+export function matchAnyDigest(expected: Uint8Array[], provided: Array<Uint8Array | null>): boolean {
+  let ok = false
+  for (const exp of expected) {
+    const dummy = new Uint8Array(exp.byteLength)
+    for (const got of provided) {
+      const right = got && got.byteLength === exp.byteLength ? got : dummy
+      if (got && got.byteLength === exp.byteLength && timingSafeEqual(exp, right)) ok = true
+      else timingSafeEqual(exp, right)
+    }
+  }
+  return ok
 }

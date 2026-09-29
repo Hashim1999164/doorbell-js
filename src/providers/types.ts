@@ -21,6 +21,7 @@ export type VerifiedEvent = {
   payload: unknown
   raw: Uint8Array
   timestampSec: number | undefined
+  signal: AbortSignal
 }
 
 export type VerifyCtx = {

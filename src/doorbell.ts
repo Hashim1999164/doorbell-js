@@ -1,10 +1,12 @@
-import { asRawBody, secretBytesUtf8 } from './bytes.js'
+import { secretBytesUtf8 } from './bytes.js'
 import { DoorbellError, missingSecretError } from './errors.js'
 import { handshake } from './handshake.js'
 import { headerMap } from './headers.js'
 import { MemoryStore, type IdempotencyStore } from './idempotency.js'
 import { stringField } from './json.js'
 import { providerFromPath, providers, sniffProvider } from './providers/index.js'
+import { rawFromNodeRequest } from './raw.js'
+import { lintSecret } from './secrets.js'
 import type { ProviderName, VerifiedEvent } from './providers/types.js'
 import type { HeaderMap } from './headers.js'
 
@@ -37,6 +39,8 @@ export type DoorbellConfig = {
   idempotencyTtlMs?: number
   publicUrl?: string | ((info: { url: string | undefined; headers: HeaderMap }) => string)
   onError?: (err: unknown, event: VerifiedEvent | undefined) => void
+  maxBodyBytes?: number
+  handlerTimeoutMs?: number
 }
 
 export type NormalizedRequest = {
@@ -59,6 +63,7 @@ export type ExpressReq = {
   protocol?: string
   headers: Record<string, string | string[] | undefined>
   body: unknown
+  rawBody?: unknown
   get?: (name: string) => string | undefined
 }
 
@@ -68,9 +73,29 @@ export type ExpressRes = {
   setHeader?: (name: string, value: string) => void
 }
 
+export type FastifyReq = {
+  method?: string
+  url?: string
+  headers: Record<string, string | string[] | undefined>
+  body: unknown
+  rawBody?: unknown
+}
+
+export type FastifyReply = {
+  code: (status: number) => FastifyReply
+  type: (contentType: string) => FastifyReply
+  send: (body: string) => unknown
+}
+
+export type HonoContext = {
+  req: { raw: Request }
+}
+
 export type Doorbell = {
   (req: Request): Promise<Response>
   express: (req: ExpressReq, res: ExpressRes, next?: (err?: unknown) => void) => Promise<void>
+  fastify: (req: FastifyReq, reply: FastifyReply) => Promise<void>
+  hono: (c: HonoContext) => Promise<Response>
   handle: (req: NormalizedRequest) => Promise<NormalizedResponse>
 }
 
@@ -99,11 +124,14 @@ export function doorbell(config: DoorbellConfig): Doorbell {
   for (const name of allowed) {
     const secrets = asSecretList(config[name]?.secret)
     if (secrets.length === 0) throw missingSecretError(name)
+    for (const secret of secrets) lintSecret(name, secret)
   }
 
   const store = config.store ?? new MemoryStore(config.now ?? Date.now)
   const ttl = config.idempotencyTtlMs ?? 24 * 60 * 60 * 1000
   const unhandled = config.unhandled ?? 'ignore'
+  const maxBodyBytes = config.maxBodyBytes ?? 5_000_000
+  const handlerTimeoutMs = config.handlerTimeoutMs
 
   const handle = async (req: NormalizedRequest): Promise<NormalizedResponse> => {
     const method = (req.method || 'POST').toUpperCase()
@@ -121,6 +149,14 @@ export function doorbell(config: DoorbellConfig): Doorbell {
 
     if (method !== 'POST' && method !== 'PUT') {
       return text(405, 'Use POST.')
+    }
+
+    if (maxBodyBytes > 0 && raw.byteLength > maxBodyBytes) {
+      throw new DoorbellError(`Body is ${raw.byteLength} bytes. Limit is ${maxBodyBytes}.`, {
+        code: 'too_large',
+        status: 413,
+        hint: 'Raise maxBodyBytes if you really take huge GitHub push payloads. HMAC on a 50MB body is how people melt a box.',
+      })
     }
 
     let name = providerFromPath(req.url, allowed) ?? sniffProvider(headers, allowed)
@@ -165,6 +201,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     })
 
     const payload = provider.parse(raw)
+    const ac = new AbortController()
     const event: VerifiedEvent = {
       provider: name,
       id: provider.eventId(headers, payload, raw),
@@ -172,6 +209,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
       payload,
       raw,
       timestampSec: verified.timestampSec,
+      signal: ac.signal,
     }
 
     if (name === 'github' && (headers.get('x-github-event') ?? '').toLowerCase() === 'ping') {
@@ -200,12 +238,14 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     }
 
     try {
-      await fn(event)
+      await runHandler(fn, event, handlerTimeoutMs, ac)
       await store.commit(key, ttl)
       return json(200, { ok: true, id: event.id, type: event.type })
     } catch (err) {
+      ac.abort()
       await store.drop(key)
       config.onError?.(err, event)
+      if (err instanceof DoorbellError && err.code === 'timeout') throw err
       throw new DoorbellError('Handler threw. Told the sender to retry.', {
         code: 'handler',
         status: 500,
@@ -243,7 +283,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     try {
       let raw: Uint8Array
       try {
-        raw = asRawBody(req.body)
+        raw = rawFromNodeRequest(req)
       } catch (err) {
         if (err instanceof DoorbellError) {
           res.setHeader?.('content-type', 'text/plain; charset=utf-8')
@@ -266,7 +306,29 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     }
   }
 
-  const doorbellFn = Object.assign(fetchHandler, { express, handle: guarded })
+  const fastify = async (req: FastifyReq, reply: FastifyReply) => {
+    let raw: Uint8Array
+    try {
+      raw = rawFromNodeRequest(req)
+    } catch (err) {
+      if (err instanceof DoorbellError) {
+        reply.code(err.status).type('text/plain; charset=utf-8').send(err.toText())
+        return
+      }
+      throw err
+    }
+    const result = await guarded({
+      method: req.method ?? 'POST',
+      url: req.url,
+      headers: headerMap(req.headers),
+      raw,
+    })
+    reply.code(result.status).type(result.headers['content-type'] ?? 'text/plain; charset=utf-8').send(result.body)
+  }
+
+  const hono = async (c: HonoContext) => fetchHandler(c.req.raw)
+
+  const doorbellFn = Object.assign(fetchHandler, { express, fastify, hono, handle: guarded })
   return doorbellFn
 }
 
@@ -280,6 +342,39 @@ function pickHandler(cfg: ProviderConfig, type: string): WebhookHandler | undefi
   if (cfg.on?.[type]) return cfg.on[type]
   if (cfg.onAny) return cfg.onAny
   return undefined
+}
+
+async function runHandler(
+  fn: WebhookHandler,
+  event: VerifiedEvent,
+  timeoutMs: number | undefined,
+  ac: AbortController,
+): Promise<void> {
+  const work = Promise.resolve(fn(event))
+  if (timeoutMs == null || timeoutMs <= 0) {
+    await work
+    return
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          ac.abort()
+          reject(
+            new DoorbellError('Handler ran too long.', {
+              code: 'timeout',
+              status: 500,
+              hint: 'Stripe retries 5xx. Keep this short, or push the slow work onto a queue and return.',
+            }),
+          )
+        }, timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 function text(status: number, body: string): NormalizedResponse {

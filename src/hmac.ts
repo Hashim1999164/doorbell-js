@@ -1,5 +1,5 @@
-import { parseHex, toBase64, toHex } from './bytes.js'
-import { timingSafeEqual, timingSafeEqualHex } from './timing.js'
+import { parseBase64, parseHex, toBase64, toHex } from './bytes.js'
+import { matchAnyDigest, timingSafeEqual, timingSafeEqualHex } from './timing.js'
 
 export async function hmacSha256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
   return hmac(key, data, 'SHA-256')
@@ -58,8 +58,8 @@ export async function matchHexMac(
   data: Uint8Array,
   providedHex: string,
 ): Promise<boolean> {
-  const expected = toHex(await hmacSha256(key, data))
-  return timingSafeEqualHex(expected, providedHex)
+  const expected = await hmacSha256(key, data)
+  return matchAnyDigest([expected], [parseHex(providedHex)])
 }
 
 export async function matchBase64Mac(
@@ -68,28 +68,7 @@ export async function matchBase64Mac(
   providedB64: string,
 ): Promise<boolean> {
   const expected = await hmacSha256(key, data)
-  const provided = parseBase64Strict(providedB64)
-  if (!provided) {
-    timingSafeEqual(expected, expected)
-    return false
-  }
-  return timingSafeEqual(expected, provided)
-}
-
-function parseBase64Strict(value: string): Uint8Array | null {
-  try {
-    if (typeof Buffer !== 'undefined') {
-      const buf = Buffer.from(value.trim(), 'base64')
-      if (buf.byteLength === 0 && value.trim().length > 0) return null
-      return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
-    }
-    const bin = atob(value.trim())
-    const out = new Uint8Array(bin.length)
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-    return out
-  } catch {
-    return null
-  }
+  return matchAnyDigest([expected], [parseBase64(providedB64)])
 }
 
 export async function matchAnyHexMac(
@@ -97,14 +76,19 @@ export async function matchAnyHexMac(
   data: Uint8Array,
   candidates: string[],
 ): Promise<boolean> {
-  let ok = false
-  for (const key of keys) {
-    const expected = toHex(await hmacSha256(key, data))
-    for (const candidate of candidates) {
-      if (timingSafeEqualHex(expected, candidate)) ok = true
-    }
-  }
-  return ok
+  const expected = await Promise.all(keys.map((key) => hmacSha256(key, data)))
+  const provided = candidates.map((c) => parseHex(c))
+  return matchAnyDigest(expected, provided)
+}
+
+export async function matchAnyBase64Mac(
+  keys: Uint8Array[],
+  data: Uint8Array,
+  candidates: string[],
+): Promise<boolean> {
+  const expected = await Promise.all(keys.map((key) => hmacSha256(key, data)))
+  const provided = candidates.map((c) => parseBase64(c))
+  return matchAnyDigest(expected, provided)
 }
 
 export function decodeHexMac(value: string): Uint8Array | null {

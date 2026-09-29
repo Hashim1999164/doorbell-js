@@ -1,6 +1,6 @@
 {
   "name": "doorbell-js",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Check the knock. One handler for Stripe, GitHub, Slack, Shopify, and the Svix crowd.",
   "license": "MIT",
   "type": "module",

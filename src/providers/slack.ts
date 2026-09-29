@@ -1,9 +1,9 @@
-import { fromUtf8, utf8 } from '../bytes.js'
 import { assertFresh } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
 import { header } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
 import { parseJsonBody, stringField } from '../json.js'
+import { prefixRaw } from '../wire.js'
 import type { HeaderMap } from '../headers.js'
 import type { Provider } from './types.js'
 
@@ -44,7 +44,7 @@ export const slack: Provider = {
       })
     }
     const hex = sig.startsWith('v0=') ? sig.slice(3) : sig
-    const signed = utf8(`v0:${ts}:${fromUtf8(ctx.raw)}`)
+    const signed = prefixRaw(`v0:${ts}:`, ctx.raw)
     const ok = await matchAnyHexMac(ctx.secrets, signed, [hex])
     if (!ok) {
       throw new DoorbellError('Slack signature did not match.', {
