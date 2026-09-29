@@ -1,0 +1,61 @@
+{
+  "name": "doorbell-js",
+  "version": "1.0.0",
+  "description": "Check the knock. One handler for Stripe, GitHub, Slack, Shopify, and the Svix crowd.",
+  "license": "MIT",
+  "type": "module",
+  "author": "Hashim Khan <sardarhashim30@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hashim1999164/doorbell-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Hashim1999164/doorbell-js/issues"
+  },
+  "homepage": "https://github.com/Hashim1999164/doorbell-js#readme",
+  "keywords": [
+    "webhook",
+    "webhooks",
+    "stripe",
+    "github",
+    "slack",
+    "shopify",
+    "svix",
+    "clerk",
+    "resend",
+    "signature",
+    "hmac"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm test && npm run typecheck && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

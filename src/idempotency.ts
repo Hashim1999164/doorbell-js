@@ -1,0 +1,58 @@
+export type IdempotencyStore = {
+  /**
+   * Try to take this event. Return 'run' if the handler should run,
+   * 'duplicate' if it already succeeded.
+   * Concurrent deliveries of the same id wait on the first one.
+   */
+  claim(key: string): Promise<'run' | 'duplicate'>
+  commit(key: string, ttlMs: number): Promise<void>
+  drop(key: string): Promise<void>
+}
+
+type Slot = {
+  state: 'inflight' | 'done'
+  waiters: Array<() => void>
+  expiresAt: number
+}
+
+export class MemoryStore implements IdempotencyStore {
+  private readonly slots = new Map<string, Slot>()
+
+  constructor(private readonly now: () => number = Date.now) {}
+
+  async claim(key: string): Promise<'run' | 'duplicate'> {
+    this.gc()
+    for (;;) {
+      const existing = this.slots.get(key)
+      if (existing?.state === 'done' && existing.expiresAt > this.now()) return 'duplicate'
+      if (existing?.state === 'inflight') {
+        await new Promise<void>((resolve) => {
+          existing.waiters.push(resolve)
+        })
+        continue
+      }
+      this.slots.set(key, { state: 'inflight', waiters: [], expiresAt: this.now() + 60_000 })
+      return 'run'
+    }
+  }
+
+  async commit(key: string, ttlMs: number): Promise<void> {
+    const slot = this.slots.get(key)
+    const waiters = slot?.waiters ?? []
+    this.slots.set(key, { state: 'done', waiters: [], expiresAt: this.now() + ttlMs })
+    for (const w of waiters) w()
+  }
+
+  async drop(key: string): Promise<void> {
+    const slot = this.slots.get(key)
+    this.slots.delete(key)
+    for (const w of slot?.waiters ?? []) w()
+  }
+
+  private gc() {
+    const now = this.now()
+    for (const [key, slot] of this.slots) {
+      if (slot.state === 'done' && slot.expiresAt <= now) this.slots.delete(key)
+    }
+  }
+}
