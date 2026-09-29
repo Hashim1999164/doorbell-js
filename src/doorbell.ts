@@ -212,7 +212,8 @@ export function doorbell(config: DoorbellConfig): Doorbell {
       signal: ac.signal,
     }
 
-    if (name === 'github' && (headers.get('x-github-event') ?? '').toLowerCase() === 'ping') {
+    // GitHub ping is the signed body (zen), not X-GitHub-Event. That header is not in the HMAC.
+    if (name === 'github' && stringField(payload, 'zen')) {
       return json(200, { ok: true, ping: true })
     }
 

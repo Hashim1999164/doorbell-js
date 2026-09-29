@@ -12,23 +12,33 @@ export function parseJsonBody(raw: Uint8Array): unknown {
     })
   }
   try {
-    return JSON.parse(text) as unknown
+    return JSON.parse(text, jsonReviver) as unknown
   } catch (cause) {
     throw new DoorbellError('Body is not JSON.', { code: 'bad_json', cause })
   }
 }
 
+function jsonReviver(key: string, value: unknown): unknown {
+  if (key === '__proto__' || key === 'prototype') return undefined
+  if (key === 'constructor' && value !== null && typeof value === 'object') return undefined
+  return value
+}
+
+function own(payload: object, key: string): unknown {
+  if (!Object.prototype.hasOwnProperty.call(payload, key)) return undefined
+  return (payload as Record<string, unknown>)[key]
+}
+
 export function stringField(payload: unknown, key: string): string | undefined {
-  if (payload && typeof payload === 'object' && key in payload) {
-    const value = (payload as Record<string, unknown>)[key]
-    if (typeof value === 'string' && value.length > 0) return value
-  }
+  if (!payload || typeof payload !== 'object') return undefined
+  const value = own(payload, key)
+  if (typeof value === 'string' && value.length > 0) return value
   return undefined
 }
 
 export function unixField(payload: unknown, key: string): number | undefined {
-  if (!payload || typeof payload !== 'object' || !(key in payload)) return undefined
-  const value = (payload as Record<string, unknown>)[key]
+  if (!payload || typeof payload !== 'object') return undefined
+  const value = own(payload, key)
   let n: number | undefined
   if (typeof value === 'number' && Number.isFinite(value)) n = value
   else if (typeof value === 'string' && value.length > 0) {

@@ -3,6 +3,7 @@ import { assertFresh } from '../clock.js'
 import { DoorbellError } from '../errors.js'
 import { capParts, header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
+import { bodyFingerprint } from '../hash.js'
 import { parseJsonBody, stringField } from '../json.js'
 import { prefixRaw } from '../wire.js'
 import type { HeaderMap } from '../headers.js'
@@ -28,8 +29,8 @@ export const paddle: Provider = {
   name: 'paddle',
   sniff: sniffPaddle,
   parse: parseJsonBody,
-  eventId(_headers, payload) {
-    return stringField(payload, 'event_id') ?? stringField(payload, 'notification_id') ?? 'paddle'
+  eventId(_headers, payload, raw) {
+    return stringField(payload, 'event_id') ?? stringField(payload, 'notification_id') ?? bodyFingerprint(raw)
   },
   eventType(_headers, payload) {
     return stringField(payload, 'event_type') ?? 'paddle'

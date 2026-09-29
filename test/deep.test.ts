@@ -165,7 +165,7 @@ describe('concurrent deliveries', () => {
   it('only runs one handler when two copies arrive together', async () => {
     const store = new MemoryStore(NOW)
     let n = 0
-    const payload = '{"zen":"x"}'
+    const payload = '{"ref":"refs/heads/main"}'
     const secret = 'not-a-token'
     const sig = await signGitHub(payload, secret)
     const app = doorbell({
@@ -193,6 +193,42 @@ describe('concurrent deliveries', () => {
     const [a, b] = await Promise.all([app(req()), app(req())])
     expect(a.status).toBe(200)
     expect(b.status).toBe(200)
+    expect(n).toBe(1)
+  })
+
+  it('keys GitHub idempotency on the body, not the unsigned delivery header', async () => {
+    const store = new MemoryStore(NOW)
+    let n = 0
+    const payload = '{"ref":"refs/heads/main"}'
+    const secret = 'not-a-token'
+    const sig = await signGitHub(payload, secret)
+    const app = doorbell({
+      store,
+      github: {
+        secret,
+        on: {
+          push: async () => {
+            n += 1
+          },
+        },
+      },
+    })
+    const send = (delivery: string) =>
+      app(
+        new Request('http://shop.test/webhooks/github', {
+          method: 'POST',
+          headers: {
+            'x-github-event': 'push',
+            'x-github-delivery': delivery,
+            'x-hub-signature-256': sig,
+          },
+          body: payload,
+        }),
+      )
+    expect((await send('del-a')).status).toBe(200)
+    const second = await send('del-b')
+    expect(second.status).toBe(200)
+    expect(await second.json()).toMatchObject({ duplicate: true })
     expect(n).toBe(1)
   })
 })

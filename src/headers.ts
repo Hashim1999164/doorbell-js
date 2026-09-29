@@ -2,6 +2,13 @@ import { DoorbellError } from './errors.js'
 
 export type HeaderMap = Map<string, string>
 
+const COMMA_JOIN = new Set([
+  'stripe-signature',
+  'svix-signature',
+  'webhook-signature',
+  'paddle-signature',
+])
+
 export function headerMap(
   input: Headers | Record<string, string | string[] | undefined> | HeaderMap,
 ): HeaderMap {
@@ -15,8 +22,13 @@ export function headerMap(
   }
   for (const [key, value] of Object.entries(input as Record<string, string | string[] | undefined>)) {
     if (value == null) continue
-    const joined = Array.isArray(value) ? value.join(',') : value
-    out.set(key.toLowerCase(), joined)
+    const name = key.toLowerCase()
+    if (Array.isArray(value)) {
+      if (value.length === 0) continue
+      out.set(name, COMMA_JOIN.has(name) ? value.join(',') : String(value[0]))
+      continue
+    }
+    out.set(name, value)
   }
   return out
 }

@@ -1,9 +1,10 @@
-import { utf8 } from '../bytes.js'
+import { parseBase64, utf8 } from '../bytes.js'
 import { burnSha1 } from '../burn.js'
 import { DoorbellError, secretHint } from '../errors.js'
+import { bodyFingerprint } from '../hash.js'
 import { header, sigHeader } from '../headers.js'
 import { hmacSha1, timingSafeEqual } from '../hmac.js'
-import { parseBase64 } from '../bytes.js'
+import { stringField } from '../json.js'
 import type { HeaderMap } from '../headers.js'
 import type { Provider } from './types.js'
 
@@ -16,10 +17,12 @@ function formParams(raw: Uint8Array): URLSearchParams {
 }
 
 function twilioBase(url: string, params: URLSearchParams): string {
-  const keys = [...params.keys()].sort()
+  const keys = [...new Set(params.keys())].sort()
   let out = url
   for (const key of keys) {
-    out += key + (params.get(key) ?? '')
+    for (const value of params.getAll(key)) {
+      out += key + value
+    }
   }
   return out
 }
@@ -37,14 +40,8 @@ export const twilio: Provider = {
     const params = formParams(raw)
     return Object.fromEntries(params.entries())
   },
-  eventId(_headers, payload) {
-    if (payload && typeof payload === 'object' && 'MessageSid' in payload && typeof payload.MessageSid === 'string') {
-      return payload.MessageSid
-    }
-    if (payload && typeof payload === 'object' && 'CallSid' in payload && typeof payload.CallSid === 'string') {
-      return payload.CallSid
-    }
-    return 'twilio'
+  eventId(_headers, payload, raw) {
+    return stringField(payload, 'MessageSid') ?? stringField(payload, 'CallSid') ?? bodyFingerprint(raw)
   },
   eventType() {
     return 'twilio'

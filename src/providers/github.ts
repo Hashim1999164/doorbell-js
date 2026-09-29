@@ -1,6 +1,6 @@
 import { burnHex } from '../burn.js'
-import { fromUtf8, utf8 } from '../bytes.js'
 import { DoorbellError, secretHint } from '../errors.js'
+import { bodyFingerprint } from '../hash.js'
 import { header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
 import { parseJsonBody, stringField } from '../json.js'
@@ -22,10 +22,11 @@ export const github: Provider = {
   name: 'github',
   sniff: sniffGitHub,
   parse: parseJsonBody,
-  eventId(headers) {
-    return header(headers, 'x-github-delivery') ?? `github:${header(headers, 'x-github-event') ?? 'event'}`
+  eventId(_headers, _payload, raw) {
+    return bodyFingerprint(raw)
   },
   eventType(headers, payload) {
+    // X-GitHub-Event is not in the HMAC. Prefer onAny and read the payload.
     const event = header(headers, 'x-github-event') ?? 'unknown'
     const action = stringField(payload, 'action')
     return action ? `${event}.${action}` : event
@@ -69,14 +70,11 @@ export const meta: Provider = {
   name: 'meta',
   sniff: sniffMeta,
   parse: parseJsonBody,
-  eventId(headers, payload) {
-    return stringField(payload, 'entry') ? `meta:${fromUtf8(utf8(JSON.stringify(payload))).slice(0, 24)}` : (header(headers, 'x-hub-signature-256') ?? 'meta')
+  eventId(_headers, _payload, raw) {
+    return bodyFingerprint(raw)
   },
   eventType(_headers, payload) {
-    if (payload && typeof payload === 'object' && 'object' in payload && typeof payload.object === 'string') {
-      return payload.object
-    }
-    return 'meta'
+    return stringField(payload, 'object') ?? 'meta'
   },
   async verify(ctx) {
     const sig = sigHeader(ctx.headers, 'x-hub-signature-256', 'Meta')

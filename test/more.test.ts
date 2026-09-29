@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { utf8 } from '../src/bytes.js'
 import { doorbell } from '../src/doorbell.js'
+import { headerMap } from '../src/headers.js'
 import { MemoryStore } from '../src/idempotency.js'
+import { parseJsonBody, stringField } from '../src/json.js'
 import { signGitHub, signLinear, signPaddle, signShopify, signStripe } from '../src/sign.js'
 
 const NOW = () => 1_614_556_800_000
@@ -34,7 +37,7 @@ describe('shopify linear paddle', () => {
     expect(topic).toBe('orders/create')
   })
 
-  it('rejects an old X-Shopify-Triggered-At after HMAC', async () => {
+  it('does not clock Shopify on X-Shopify-Triggered-At because that header is not signed', async () => {
     const payload = '{"id":1,"name":"Order"}'
     const secret = 'shopify_shared_secret'
     const hmac = await signShopify(payload, secret)
@@ -53,8 +56,41 @@ describe('shopify linear paddle', () => {
         body: payload,
       }),
     )
-    expect(res.status).toBe(400)
-    expect(await res.text()).toMatch(/triggered-at|window/)
+    expect(res.status).toBe(200)
+  })
+
+  it('keys Shopify idempotency on the body, not the unsigned webhook-id header', async () => {
+    const store = new MemoryStore(NOW)
+    let n = 0
+    const payload = '{"id":1,"name":"Order"}'
+    const secret = 'shopify_shared_secret'
+    const hmac = await signShopify(payload, secret)
+    const app = doorbell({
+      store,
+      shopify: {
+        secret,
+        onAny: async () => {
+          n += 1
+        },
+      },
+    })
+    const send = (id: string) =>
+      app(
+        new Request('http://shop.test/webhooks/shopify', {
+          method: 'POST',
+          headers: {
+            'x-shopify-hmac-sha256': hmac,
+            'x-shopify-topic': 'orders/create',
+            'x-shopify-webhook-id': id,
+          },
+          body: payload,
+        }),
+      )
+    expect((await send('wh_a')).status).toBe(200)
+    const second = await send('wh_b')
+    expect(second.status).toBe(200)
+    expect(await second.json()).toMatchObject({ duplicate: true })
+    expect(n).toBe(1)
   })
 
   it('verifies linear hex hmac', async () => {
@@ -188,7 +224,7 @@ describe('idempotency', () => {
   it('lets a failed handler run again', async () => {
     const store = new MemoryStore(NOW)
     let n = 0
-    const payload = '{"zen":"x"}'
+    const payload = '{"ref":"refs/heads/main"}'
     const secret = 's'
     const sig = await signGitHub(payload, secret)
     const app = doorbell({
@@ -217,6 +253,36 @@ describe('idempotency', () => {
     expect((await app(req())).status).toBe(200)
     expect(n).toBe(2)
   })
+
+  it('does not collapse two Linear events that share type and action', async () => {
+    const store = new MemoryStore(NOW)
+    let n = 0
+    const secret = 'linear_webhook_secret'
+    const app = doorbell({
+      now: NOW,
+      store,
+      linear: {
+        secret,
+        onAny: async () => {
+          n += 1
+        },
+      },
+    })
+    const send = async (webhookId: string) => {
+      const payload = `{"action":"create","type":"Issue","webhookId":"${webhookId}","webhookTimestamp":1614556800}`
+      const sig = await signLinear(payload, secret)
+      return app(
+        new Request('http://shop.test/webhooks/linear', {
+          method: 'POST',
+          headers: { 'linear-signature': sig },
+          body: payload,
+        }),
+      )
+    }
+    expect((await send('wh_a')).status).toBe(200)
+    expect((await send('wh_b')).status).toBe(200)
+    expect(n).toBe(2)
+  })
 })
 
 describe('unhandled events', () => {
@@ -243,5 +309,39 @@ describe('unhandled events', () => {
     )
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({ ignored: 'customer.created' })
+  })
+})
+
+describe('json intake', () => {
+  it('drops __proto__ and constructor objects from parsed JSON', () => {
+    const payload = parseJsonBody(
+      utf8('{"type":"ok","__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}}}'),
+    )
+    expect(Object.getPrototypeOf(payload as object)).toBe(Object.prototype)
+    expect(({} as { polluted?: boolean }).polluted).toBeUndefined()
+    expect(Object.prototype.hasOwnProperty.call(payload, '__proto__')).toBe(false)
+    expect(Object.prototype.hasOwnProperty.call(payload, 'constructor')).toBe(false)
+    expect(stringField(payload, 'type')).toBe('ok')
+  })
+})
+
+describe('header arrays', () => {
+  it('uses the first GitHub signature when Express gives an array, not a comma join', async () => {
+    const payload = '{"ref":"refs/heads/main"}'
+    const secret = 'not-a-token'
+    const sig = await signGitHub(payload, secret)
+    const app = doorbell({
+      github: { secret, onAny: async () => {} },
+    })
+    const result = await app.handle({
+      method: 'POST',
+      url: 'http://shop.test/webhooks/github',
+      headers: headerMap({
+        'x-github-event': 'push',
+        'x-hub-signature-256': [sig, 'sha256=deadbeef'],
+      }),
+      raw: utf8(payload),
+    })
+    expect(result.status).toBe(200)
   })
 })

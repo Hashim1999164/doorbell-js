@@ -15,6 +15,7 @@ async function hmac(
   hash: 'SHA-256' | 'SHA-1',
 ): Promise<Uint8Array> {
   key = copyBytes(key)
+  data = copyBytes(data)
   if (key.byteLength === 0) {
     throw new Error('HMAC key is empty')
   }

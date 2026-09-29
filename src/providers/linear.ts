@@ -3,6 +3,7 @@ import { assertFresh } from '../clock.js'
 import { DoorbellError } from '../errors.js'
 import { header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
+import { bodyFingerprint } from '../hash.js'
 import { parseJsonBody, stringField, unixField } from '../json.js'
 import type { HeaderMap } from '../headers.js'
 import type { Provider } from './types.js'
@@ -15,11 +16,8 @@ export const linear: Provider = {
   name: 'linear',
   sniff: sniffLinear,
   parse: parseJsonBody,
-  eventId(_headers, payload) {
-    const webhookId = stringField(payload, 'webhookTimestamp')
-    const type = stringField(payload, 'type')
-    const action = stringField(payload, 'action')
-    return [type, action, webhookId].filter(Boolean).join(':') || 'linear'
+  eventId(_headers, payload, raw) {
+    return stringField(payload, 'webhookId') ?? bodyFingerprint(raw)
   },
   eventType(_headers, payload) {
     const type = stringField(payload, 'type')

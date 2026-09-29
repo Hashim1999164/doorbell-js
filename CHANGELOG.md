@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0
+
+GitHub, Shopify, and Meta HMAC the body only. Delivery id, webhook-id, and triggered-at are not in that HMAC, so they are not a clock and not an idempotency key. Those providers key retries on a fingerprint of the raw bytes.
+
+Linear keys on `webhookId` from the signed JSON. Two Issue.create events are two events.
+
+GitHub ping is the signed `zen` field. Setting `X-GitHub-Event: ping` on a captured push body does not skip your handler.
+
+JSON.parse drops `__proto__` and constructor objects. Express header arrays for GitHub/Shopify keep the first value. Stripe signature arrays still comma-join, because that is how Stripe sends v1 list.
+
 ## 1.3.0
 
 HMAC first, then the clock, the way stripe-node does. A missing header still burns HMAC so it is not a faster path. Inflight idempotency claims expire. Shopify checks `X-Shopify-Triggered-At` when it is present. Twilio tries the public URL with and without a trailing slash.

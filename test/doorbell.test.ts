@@ -195,6 +195,62 @@ describe('github', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({ ping: true })
   })
+
+  it('answers ping from the signed zen field even if X-GitHub-Event is something else', async () => {
+    const payload = '{"zen":"Speak like a human."}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    const app = doorbell({
+      github: {
+        secret,
+        on: {
+          'issues.opened': async () => {
+            throw new Error('unsigned event header must not dispatch a ping body')
+          },
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'issues',
+          'x-hub-signature-256': sig,
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ ping: true })
+  })
+
+  it('does not treat a signed push as ping just because X-GitHub-Event says ping', async () => {
+    const payload = '{"ref":"refs/heads/main"}'
+    const secret = 'github_webhook_secret'
+    const sig = await signGitHub(payload, secret)
+    let ran = false
+    const app = doorbell({
+      github: {
+        secret,
+        onAny: async () => {
+          ran = true
+        },
+      },
+    })
+    const res = await app(
+      new Request('http://shop.test/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'ping',
+          'x-hub-signature-256': sig,
+        },
+        body: payload,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(ran).toBe(true)
+    expect(await res.json()).not.toMatchObject({ ping: true })
+  })
 })
 
 describe('slack', () => {

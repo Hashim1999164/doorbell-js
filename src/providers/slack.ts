@@ -3,6 +3,7 @@ import { assertFresh } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
 import { header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
+import { bodyFingerprint } from '../hash.js'
 import { parseJsonBody, stringField } from '../json.js'
 import { prefixRaw } from '../wire.js'
 import type { HeaderMap } from '../headers.js'
@@ -16,12 +17,12 @@ export const slack: Provider = {
   name: 'slack',
   sniff: sniffSlack,
   parse: parseJsonBody,
-  eventId(_headers, payload) {
+  eventId(_headers, payload, raw) {
     return (
       stringField(payload, 'event_id') ??
       stringField(payload, 'trigger_id') ??
       stringField(payload, 'challenge') ??
-      'slack'
+      bodyFingerprint(raw)
     )
   },
   eventType(_headers, payload) {

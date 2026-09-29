@@ -3,7 +3,8 @@ import { assertFresh } from '../clock.js'
 import { DoorbellError, secretHint } from '../errors.js'
 import { capParts, header, sigHeader } from '../headers.js'
 import { matchAnyHexMac } from '../hmac.js'
-import { parseJsonBody } from '../json.js'
+import { bodyFingerprint } from '../hash.js'
+import { parseJsonBody, stringField } from '../json.js'
 import { prefixRaw } from '../wire.js'
 import type { HeaderMap } from '../headers.js'
 import type { Provider, VerifyCtx } from './types.js'
@@ -31,17 +32,11 @@ export const stripe: Provider = {
   name: 'stripe',
   sniff: sniffStripe,
   parse: parseJsonBody,
-  eventId(_headers, payload) {
-    if (payload && typeof payload === 'object' && 'id' in payload && typeof payload.id === 'string') {
-      return payload.id
-    }
-    return fallbackId(rawHashKey(_headers, payload))
+  eventId(_headers, payload, raw) {
+    return stringField(payload, 'id') ?? bodyFingerprint(raw)
   },
   eventType(_headers, payload) {
-    if (payload && typeof payload === 'object' && 'type' in payload && typeof payload.type === 'string') {
-      return payload.type
-    }
-    return 'unknown'
+    return stringField(payload, 'type') ?? 'unknown'
   },
   async verify(ctx) {
     const sigHeaderValue = sigHeader(ctx.headers, 'stripe-signature', 'Stripe')
@@ -94,11 +89,3 @@ function stripeMismatch(ctx: VerifyCtx): DoorbellError {
   })
 }
 
-function fallbackId(seed: string): string {
-  return `anon:${seed}`
-}
-
-function rawHashKey(_headers: HeaderMap, payload: unknown): string {
-  if (payload && typeof payload === 'object') return JSON.stringify(payload).slice(0, 80)
-  return 'none'
-}

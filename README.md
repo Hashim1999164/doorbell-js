@@ -78,7 +78,11 @@ HMAC first, then the clock. stripe-node does it that way. A wrong secret on an o
 
 Stripe-node only rejects events that are too old. A Stripe timestamp two minutes in the future still verifies. doorbell matches that, because your handler should not disagree with `constructEvent`.
 
-Slack, Svix, Clerk, Resend, Paddle, Shopify (`X-Shopify-Triggered-At` when present), and Linear (when `webhookTimestamp` is in the signed JSON) reject both too old and too new. A timestamp from next week is how you stash a signed body and replay it when the clock catches up.
+Slack, Svix, Clerk, Resend, Paddle, and Linear (when `webhookTimestamp` is in the signed JSON) reject both too old and too new. A timestamp from next week is how you stash a signed body and replay it when the clock catches up.
+
+Shopify HMAC is the body only. `X-Shopify-Triggered-At` is not signed, so doorbell does not clock on it. An attacker who captured a valid body can set that header to now.
+
+GitHub HMAC is the body only. `X-GitHub-Delivery` and `X-GitHub-Event` are not signed. Doorbell keys GitHub/Shopify/Meta retries on a hash of the raw bytes, not those headers. If you bind `on['issues.opened']` or `on['orders/create']`, know the event name came from an unsigned header. `onAny` and then reading the payload is the honest path.
 
 A missing signature header still runs HMAC, so that path is not faster than a bad one.
 
@@ -95,9 +99,9 @@ Meta `hub.verify_token` is compared in constant time. Slack URL verification sti
 | Provider | Notes |
 | --- | --- |
 | Stripe | Endpoint signing secret. Not `sk_live_`. Future timestamps allowed, old ones not. |
-| GitHub | Webhook Secret field. Ping is answered. Not a PAT. |
+| GitHub | Webhook Secret field. Ping is the signed `zen` field. Delivery and event headers are not in the HMAC. Not a PAT. |
 | Slack | Signing Secret. URL verification is answered after HMAC. Not `xoxb-`. |
-| Shopify | `X-Shopify-Hmac-Sha256`. Checks `X-Shopify-Triggered-At` when Shopify sends it. |
+| Shopify | `X-Shopify-Hmac-Sha256` over the body. Topic, webhook-id, and triggered-at are not signed. |
 | Svix / Clerk / Resend | Standard Webhooks. Path required if you take more than one. Both-way clock. |
 | Linear, Paddle | Hex / `ts;h1`. Linear also checks `webhookTimestamp` when it is present. |
 | Meta | POST signed. GET `hub.challenge` needs `verifyToken` |
@@ -109,7 +113,7 @@ Unknown event types return 200. Stripe retries 5xx. You do not want a week of `c
 
 A handler crash returns 500 so the sender retries.
 
-Same event id twice returns 200 and skips the work. Two copies at once wait on the first one. A stuck inflight claim expires after a minute so the next delivery is not wedged.
+Same signed body twice returns 200 and skips the work. For Stripe that is `event.id`. For GitHub and Shopify it is a hash of the bytes, because their id headers are unsigned. Two copies at once wait on the first one. A stuck inflight claim expires after a minute so the next delivery is not wedged.
 
 Default body cap is 5MB. A stuck handler can be cut off with `handlerTimeoutMs`.
 
