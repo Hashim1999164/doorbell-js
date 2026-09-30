@@ -24,10 +24,20 @@ async function hmac(
     const node = await import('node:crypto')
     const alg = hash === 'SHA-256' ? 'sha256' : 'sha1'
     return new Uint8Array(node.createHmac(alg, Buffer.from(key)).update(data).digest())
+    /* v8 ignore start */
   } catch {
-    // workers / browsers
+    return hmacSubtle(key, data, hash)
   }
+  /* v8 ignore stop */
+}
 
+/** WebCrypto path. Workers and browsers land here. Tests call this directly. */
+export async function hmacSubtle(
+  key: Uint8Array,
+  data: Uint8Array,
+  hash: 'SHA-256' | 'SHA-1' = 'SHA-256',
+): Promise<Uint8Array> {
+  /* v8 ignore next 4 */
   const subtle = globalThis.crypto?.subtle
   if (!subtle) {
     throw new Error('No HMAC implementation on this runtime')
@@ -78,7 +88,7 @@ export async function matchAnyHexMac(
   data: Uint8Array,
   candidates: string[],
 ): Promise<boolean> {
-  const expected = await Promise.all(keys.map((key) => hmacSha256(key, data)))
+  const expected = await Promise.all(keys.map((k) => hmacSha256(k, data)))
   const provided = (candidates.length > 0 ? candidates : ['']).map((c) => parseHex(c))
   return matchAnyDigest(expected, provided)
 }
@@ -88,7 +98,7 @@ export async function matchAnyBase64Mac(
   data: Uint8Array,
   candidates: string[],
 ): Promise<boolean> {
-  const expected = await Promise.all(keys.map((key) => hmacSha256(key, data)))
+  const expected = await Promise.all(keys.map((k) => hmacSha256(k, data)))
   const provided = (candidates.length > 0 ? candidates : ['']).map((c) => parseBase64(c))
   return matchAnyDigest(expected, provided)
 }

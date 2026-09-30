@@ -121,7 +121,11 @@ Meta `hub.verify_token` is hashed, then compared in constant time, so a short gu
 
 GitHub and Meta need `sha256=` on the signature header. Bare hex is refused. Standard Webhooks only uses `v1` signatures. A `v0` leftover is ignored, not treated as a MAC.
 
-`Origin` is refused. Browsers send it. Stripe does not. Set `allowOrigin` if a proxy adds it. `X-HTTP-Method-Override` is refused so a POST cannot skip HMAC and hit the Meta handshake. `Content-Encoding: gzip` is refused. HMAC is over the bytes we read, not the decompressed JSON.
+`Origin` and `Referer` are refused. Browsers send them. Stripe does not. Set `allowOrigin` / `allowReferer` if a proxy adds them. `X-HTTP-Method-Override` is refused so a POST cannot skip HMAC and hit the Meta handshake. `Content-Encoding: gzip` is refused. HMAC is over the bytes we read, not the decompressed JSON.
+
+Unsigned headers still cost RAM. The default header budget is 32KB (`maxHeaderBytes`).
+
+Express does not take `req.get('host')`. That follows `trust proxy` and `X-Forwarded-Host`. doorbell reads the `Host` header. Twilio URLs are `https` unless the host is loopback. Set `publicUrl` to the URL Twilio called. `http` to a public host needs `allowInsecureTwilioUrl`.
 
 `text/html` is refused. Fetch sets `text/plain` on a string body. That is fine. JSON providers also take `application/json`.
 
@@ -129,11 +133,11 @@ GitHub and Meta need `sha256=` on the signature header. Bare hex is refused. Sta
 
 ## After HMAC
 
-The body still has to be a JSON object. A signed `"true"` or a JSON array is not an event. Nesting and key count have a budget (`maxJsonDepth`, `maxJsonKeys`) so a signed nest bomb does not blow the stack in your handler. A UTF-8 BOM is stripped for parse only. The HMAC still ran on the raw bytes, BOM included.
+The body still has to be a JSON object. A signed `"true"` or a JSON array is not an event. Nesting, key count, and one string field have a budget (`maxJsonDepth`, `maxJsonKeys`, `maxJsonString`) so a signed nest bomb does not blow the stack in your handler. A UTF-8 BOM is stripped for parse only. The HMAC still ran on the raw bytes, BOM included.
 
-Event ids longer than 256 characters become a hash of the body. The store will not take a 10k string as a key.
+Event ids longer than 256 characters, or with a character that is not `[a-zA-Z0-9._:-]`, become a hash of the body. The store will not take `evt foo/../bar` as a Redis key. Event types longer than 128 characters, or with a control character, become `unknown`.
 
-A signing secret shorter than 8 characters is refused at boot. GitHub lets you type `x`. That is not a secret. Eight rotation secrets is enough. The in-memory store drops the oldest unpinned slot at 50,000 unique ids.
+A signing secret shorter than 8 characters is refused at boot. A secret with a newline or NUL was pasted wrong. GitHub lets you type `x`. That is not a secret. Eight rotation secrets is enough. The in-memory store drops the oldest unpinned slot at 50,000 unique ids. Extra retries of one inflight id share 64 waiter slots.
 
 ## Webhook providers
 
@@ -146,7 +150,7 @@ A signing secret shorter than 8 characters is refused at boot. GitHub lets you t
 | Svix / Clerk / Resend | `svix-signature` | Standard Webhooks. Path required if you take more than one. Both-way clock. |
 | Linear, Paddle | `Linear-Signature` / `Paddle-Signature` | Linear requires `webhookTimestamp` in the signed JSON. |
 | Meta | `X-Hub-Signature-256` | GET `hub.challenge` needs `verifyToken`. |
-| Twilio | `X-Twilio-Signature` | Auth token plus the public URL Twilio called. |
+| Twilio | `X-Twilio-Signature` | Auth token plus the public URL Twilio called. `http` is only localhost. Set `publicUrl`. |
 
 ## doorbell vs stripe-node vs rolling your own
 

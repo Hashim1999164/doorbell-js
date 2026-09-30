@@ -5,6 +5,22 @@ export function lintSecret(provider: ProviderName, secret: string): void {
   const s = secret.trim()
   if (s.length === 0) return
 
+  if (/[\x00-\x1f\x7f]/.test(s)) {
+    throw new DoorbellError('That signing secret contains a control character.', {
+      code: 'weak_secret',
+      status: 500,
+      hint: 'A secret with a newline was probably pasted wrong. HMAC keys are not multiline.',
+    })
+  }
+
+  if (s.length < 8) {
+    throw new DoorbellError('That signing secret is too short.', {
+      code: 'weak_secret',
+      status: 500,
+      hint: 'Use at least 8 characters. GitHub lets you type "x". That is not a secret.',
+    })
+  }
+
   if (provider === 'stripe') {
     if (/^sk_(live|test)_/.test(s) || /^pk_(live|test)_/.test(s) || /^rk_(live|test)_/.test(s)) {
       throw new DoorbellError('That is a Stripe API key, not a webhook secret.', {

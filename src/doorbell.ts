@@ -1,9 +1,10 @@
 import { copyBytes, secretBytesUtf8 } from './bytes.js'
-import { DoorbellError, missingSecretError, tooLargeError } from './errors.js'
+import { DoorbellError, missingSecretError, secretHint, tooLargeError } from './errors.js'
 import { handshake } from './handshake.js'
-import { headerMap } from './headers.js'
+import { assertHeaderBudget, contentTypeAllowed, header, headerMap } from './headers.js'
+import { bodyFingerprint } from './hash.js'
 import { MemoryStore, type IdempotencyStore } from './idempotency.js'
-import { hasOwn, stringField } from './json.js'
+import { assertJsonBudget, assertJsonObject, hasOwn, stringField } from './json.js'
 import { pathHasDotSegments, providerFromPath, providers, sniffHits } from './providers/index.js'
 import { rawFromNodeRequest, readRequestBodyCapped } from './raw.js'
 import { lintSecret } from './secrets.js'
@@ -41,6 +42,37 @@ export type DoorbellConfig = {
   onError?: (err: unknown, event: VerifiedEvent | undefined) => void
   maxBodyBytes?: number
   handlerTimeoutMs?: number
+  /**
+   * Do not sniff signature headers. The path must name the provider.
+   * Unsigned headers cannot pick who knocked.
+   */
+  pathOnly?: boolean
+  /** PUT is off. Stripe and GitHub POST. */
+  allowPut?: boolean
+  maxJsonDepth?: number
+  maxJsonKeys?: number
+  /** After HMAC. One signed field can still be megabytes of string. */
+  maxJsonString?: number
+  maxSecrets?: number
+  maxStoreSlots?: number
+  /** Concurrent retries of one inflight id share this many waiter slots. Extra callers chain. */
+  maxStoreWaiters?: number
+  maxUrlLength?: number
+  maxHeaderBytes?: number
+  /**
+   * Browsers send Origin. Stripe does not. Refuse it so a form on another site
+   * cannot even reach HMAC.
+   */
+  allowOrigin?: boolean
+  /** Browsers send Referer. Stripe does not. Same idea as Origin. */
+  allowReferer?: boolean
+  /** POST with X-HTTP-Method-Override: GET would skip HMAC and hit Meta handshake. */
+  allowMethodOverride?: boolean
+  /**
+   * Twilio HMAC includes the public URL. http is only for localhost.
+   * Production needs https, or set publicUrl to the https URL Twilio called.
+   */
+  allowInsecureTwilioUrl?: boolean
 }
 
 export type NormalizedRequest = {
@@ -121,9 +153,17 @@ export function doorbell(config: DoorbellConfig): Doorbell {
   if (allowed.size === 0) {
     throw new DoorbellError('doorbell() needs at least one provider.', { code: 'empty_config', status: 500 })
   }
+  const maxSecrets = config.maxSecrets ?? 8
   for (const name of allowed) {
     const secrets = asSecretList(config[name]?.secret)
     if (secrets.length === 0) throw missingSecretError(name)
+    if (secrets.length > maxSecrets) {
+      throw new DoorbellError('Too many signing secrets for one provider.', {
+        code: 'too_many_secrets',
+        status: 500,
+        hint: 'Rotation wants two keys, not a pile. Raise maxSecrets if you really need more.',
+      })
+    }
     for (const secret of secrets) lintSecret(name, secret)
   }
 
@@ -132,7 +172,14 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     60_000,
     (handlerTimeoutMs && handlerTimeoutMs > 0 ? handlerTimeoutMs : 0) + 60_000,
   )
-  const store = config.store ?? new MemoryStore(config.now ?? Date.now, inflightHoldMs)
+  const store =
+    config.store ??
+    new MemoryStore(
+      config.now ?? Date.now,
+      inflightHoldMs,
+      config.maxStoreSlots ?? 50_000,
+      config.maxStoreWaiters ?? 64,
+    )
   const ttl = config.idempotencyTtlMs ?? 24 * 60 * 60 * 1000
   const unhandled = config.unhandled ?? 'ignore'
   const maxBodyBytes = config.maxBodyBytes ?? 5_000_000
@@ -155,8 +202,56 @@ export function doorbell(config: DoorbellConfig): Doorbell {
       return text(404, 'Nothing to do on GET unless this is a Meta hub.challenge handshake.')
     }
 
-    if (method !== 'POST' && method !== 'PUT') {
-      return text(405, 'Use POST.')
+    if (method !== 'POST') {
+      if (!(method === 'PUT' && config.allowPut)) {
+        return text(405, 'Use POST.')
+      }
+    }
+
+    if ((req.url?.length ?? 0) > (config.maxUrlLength ?? 4096)) {
+      throw new DoorbellError('Webhook URL is huge.', {
+        code: 'bad_url',
+        hint: 'Express originalUrl should be a path, not a 100KB string.',
+      })
+    }
+
+    assertHeaderBudget(headers, config.maxHeaderBytes ?? 32_768)
+
+    const encoding = header(headers, 'content-encoding')
+    if (encoding) {
+      const enc = encoding.split(',')[0]!.trim().toLowerCase()
+      if (enc && enc !== 'identity') {
+        throw new DoorbellError('Compressed webhook bodies are refused.', {
+          code: 'bad_encoding',
+          hint: 'HMAC is over the bytes we read. gzip of the JSON is not the JSON Stripe signed.',
+        })
+      }
+    }
+
+    if (!config.allowOrigin && header(headers, 'origin')) {
+      throw new DoorbellError('Origin header on a webhook. Browsers send that. Stripe does not.', {
+        code: 'browser_origin',
+        hint: 'A page on another origin can POST here. HMAC still has to match, but this route should not look like a browser form. Set allowOrigin if a proxy adds Origin.',
+      })
+    }
+
+    if (!config.allowReferer && header(headers, 'referer')) {
+      throw new DoorbellError('Referer header on a webhook. Browsers send that. Stripe does not.', {
+        code: 'browser_referer',
+        hint: 'Same as Origin. Set allowReferer if a proxy adds it.',
+      })
+    }
+
+    if (
+      !config.allowMethodOverride &&
+      (header(headers, 'x-http-method-override') ||
+        header(headers, 'x-http-method') ||
+        header(headers, 'x-method-override'))
+    ) {
+      throw new DoorbellError('Method override headers are refused.', {
+        code: 'method_override',
+        hint: 'POST with X-HTTP-Method-Override: GET would skip HMAC and hit the Meta handshake.',
+      })
     }
 
     if (req.url && pathHasDotSegments(req.url)) {
@@ -168,11 +263,15 @@ export function doorbell(config: DoorbellConfig): Doorbell {
 
     let name = providerFromPath(req.url, allowed)
     if (!name) {
+      if (config.pathOnly) {
+        throw new DoorbellError('Could not tell who knocked.', {
+          code: 'unknown_provider',
+          hint: 'pathOnly is on. Put the provider in the URL (/webhooks/stripe). Signature headers are not a name.',
+        })
+      }
       const hits = sniffHits(headers, allowed)
       if (hits.length === 1) {
         name = hits[0]
-      } else if (hits.length === 2 && hits.includes('github') && hits.includes('meta')) {
-        name = 'github'
       } else if (hits.length > 1) {
         const svixFamily = hits.filter((n) => n === 'svix' || n === 'clerk' || n === 'resend')
         const svixOnly = svixFamily.length === hits.length
@@ -184,7 +283,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
             code: 'ambiguous_provider',
             hint: svixOnly
               ? 'Put the provider in the path: /webhooks/clerk or /webhooks/resend.'
-              : `Saw ${hits.join(', ')}. Put the name in the URL (/webhooks/${hits[0] ?? 'stripe'}). Extra signature headers from a proxy will not pick a winner.`,
+              : `Saw ${hits.join(', ')}. Put the name in the URL (/webhooks/${hits[0]}). Extra signature headers from a proxy will not pick a winner.`,
           },
         )
       }
@@ -197,9 +296,18 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     }
 
     const cfg = config[name]
+    /* v8 ignore start */
     if (!cfg) {
       throw new DoorbellError(`Got a ${name} hook but that provider is not configured.`, {
         code: 'unconfigured',
+      })
+    }
+    /* v8 ignore stop */
+
+    if (!contentTypeAllowed(name, headers)) {
+      throw new DoorbellError('Content-Type is not a webhook type.', {
+        code: 'bad_content_type',
+        hint: 'JSON providers want application/json. Twilio wants form-urlencoded. A browser navigating here sends text/html.',
       })
     }
 
@@ -208,6 +316,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     const toleranceSec = cfg.toleranceSec ?? config.toleranceSec ?? 300
     const now = config.now ?? Date.now
     const url = resolveUrl(config.publicUrl, req)
+    if (name === 'twilio') assertTwilioPublicUrl(url, config.allowInsecureTwilioUrl)
 
     const verified = await provider.verify({
       raw,
@@ -220,17 +329,23 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     })
 
     const payload = provider.parse(raw)
+    if (name !== 'twilio') assertJsonObject(payload)
+    assertJsonBudget(payload, {
+      maxDepth: config.maxJsonDepth ?? 40,
+      maxKeys: config.maxJsonKeys ?? 20_000,
+      maxString: config.maxJsonString ?? 1_000_000,
+    })
     const ac = new AbortController()
     const event: VerifiedEvent = {
       provider: name,
-      id: provider.eventId(headers, payload, raw),
-      type: provider.eventType(headers, payload),
+      id: capEventId(provider.eventId(headers, payload, raw), raw),
+      type: capEventType(provider.eventType(headers, payload)),
       payload,
       raw,
       timestampSec: verified.timestampSec,
       signal: ac.signal,
       // Stripe-Account is not in the HMAC. Connect account id lives on the signed JSON.
-      account: name === 'stripe' ? stringField(payload, 'account') : undefined,
+      account: capAccount(name === 'stripe' ? stringField(payload, 'account') : undefined),
     }
 
     // GitHub ping is the signed zen field, even if it is empty. That header is not in the HMAC.
@@ -343,7 +458,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
         headers: headerMap(req.headers),
         raw,
       })
-      res.setHeader?.('content-type', result.headers['content-type'] ?? 'text/plain; charset=utf-8')
+      res.setHeader?.('content-type', result.headers['content-type']!)
       res.status(result.status).send(result.body)
     } catch (err) {
       if (next) next(err)
@@ -368,7 +483,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
       headers: headerMap(req.headers),
       raw,
     })
-    reply.code(result.status).type(result.headers['content-type'] ?? 'text/plain; charset=utf-8').send(result.body)
+    reply.code(result.status).type(result.headers['content-type']!).send(result.body)
   }
 
   const hono = async (c: HonoContext) => fetchHandler(c.req.raw)
@@ -381,6 +496,50 @@ function asSecretList(secret: string | string[] | undefined): string[] {
   if (secret == null) return []
   const list = Array.isArray(secret) ? secret : [secret]
   return list.map((s) => s.trim()).filter((s) => s.length > 0)
+}
+
+function capEventId(id: string, raw: Uint8Array): string {
+  if (id.length === 0 || id.length > 256 || /[^a-zA-Z0-9._:-]/.test(id)) {
+    return bodyFingerprint(raw)
+  }
+  return id
+}
+
+function capEventType(type: string): string {
+  if (type.length === 0 || type.length > 128 || /[\x00-\x1f\x7f]/.test(type)) return 'unknown'
+  return type
+}
+
+function capAccount(account: string | undefined): string | undefined {
+  if (!account) return undefined
+  if (account.length > 128 || /[\x00-\x1f\x7f]/.test(account)) return undefined
+  return account
+}
+
+function assertTwilioPublicUrl(url: string | undefined, allowInsecure: boolean | undefined): void {
+  if (!url) {
+    throw new DoorbellError('Twilio checks need the public URL Twilio called.', {
+      code: 'missing_url',
+      hint: secretHint('twilio'),
+    })
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new DoorbellError('Twilio public URL must be absolute https.', {
+      code: 'missing_url',
+      hint: secretHint('twilio'),
+    })
+  }
+  if (parsed.protocol === 'https:') return
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '')
+  const local = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+  if (parsed.protocol === 'http:' && (allowInsecure || local)) return
+  throw new DoorbellError('Twilio public URL must be https.', {
+    code: 'insecure_url',
+    hint: 'Twilio signs the URL it called. http is only for localhost. Set publicUrl to the https URL, or allowInsecureTwilioUrl for a local tunnel.',
+  })
 }
 
 function pickHandler(cfg: ProviderConfig, type: string): WebhookHandler | undefined {
@@ -441,8 +600,25 @@ function expressUrl(req: ExpressReq, config: DoorbellConfig): string | undefined
   if (typeof config.publicUrl === 'function') {
     return config.publicUrl({ url: req.originalUrl ?? req.url, headers: headerMap(req.headers) })
   }
-  const host = req.get?.('host')
+  const headers = headerMap(req.headers)
+  const host = header(headers, 'host')
   const path = req.originalUrl ?? req.url
-  if (host && path) return `${req.protocol ?? 'https'}://${host}${path}`
+  // Express req.get('host') follows trust proxy / X-Forwarded-Host. Do not.
+  if (host && /[\r\n\x00/]/.test(host)) return path
+  if (host && path) {
+    const proto = hostIsLocal(host) ? 'http' : 'https'
+    return `${proto}://${host}${path}`
+  }
   return path
+}
+
+function hostIsLocal(host: string): boolean {
+  let name = host.toLowerCase()
+  if (name.startsWith('[')) {
+    const end = name.indexOf(']')
+    name = end === -1 ? name : name.slice(1, end)
+  } else {
+    name = name.split(':')[0]!
+  }
+  return name === 'localhost' || name === '127.0.0.1' || name === '::1'
 }

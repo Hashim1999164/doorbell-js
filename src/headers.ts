@@ -33,8 +33,30 @@ export function headerMap(
   return out
 }
 
+export function contentTypeAllowed(provider: string, headers: HeaderMap): boolean {
+  const raw = header(headers, 'content-type')
+  if (!raw) return true
+  const ct = raw.split(';')[0]!.trim().toLowerCase()
+  if (!ct) return true
+  if (provider === 'twilio') {
+    return (
+      ct === 'application/x-www-form-urlencoded' ||
+      ct === 'application/json' ||
+      ct === 'application/octet-stream' ||
+      ct === 'multipart/form-data' ||
+      ct === 'text/plain'
+    )
+  }
+  // Fetch sets text/plain on a string body. HMAC is the seal. text/html is a browser.
+  return (
+    ct === 'application/json' ||
+    ct === 'application/octet-stream' ||
+    ct === 'text/plain'
+  )
+}
+
 export function header(headers: HeaderMap, name: string): string | undefined {
-  return headers.get(name.toLowerCase()) ?? undefined
+  return headers.get(name.toLowerCase())
 }
 
 export function headerRequired(headers: HeaderMap, name: string): string {
@@ -75,4 +97,19 @@ export function capParts(parts: string[], label: string): string[] {
     throw new DoorbellError(`${label} sent too many signatures.`, { code: 'bad_header' })
   }
   return parts
+}
+
+/** Unsigned headers are still RAM. A 1MB header block is not a webhook. */
+export function assertHeaderBudget(headers: HeaderMap, maxBytes: number): void {
+  if (maxBytes <= 0) return
+  let n = 0
+  for (const [k, v] of headers) {
+    n += k.length + v.length
+    if (n > maxBytes) {
+      throw new DoorbellError('Request headers are huge.', {
+        code: 'headers_too_large',
+        hint: 'A webhook does not need a 1MB header block. Raise maxHeaderBytes if a proxy piles them on.',
+      })
+    }
+  }
 }

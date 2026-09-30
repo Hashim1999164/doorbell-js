@@ -52,6 +52,8 @@ Linear HMAC is the body. The replay clock is `webhookTimestamp` **inside** the s
 
 Twilio HMAC-SHA1 is `public URL + sorted form fields`. `req.url` on localhost is not the URL Twilio called. Pass `publicUrl`. Trailing slash is tried both ways.
 
+doorbell will not take `http://your.domain` as that URL. `http` is only for localhost. Express `trust proxy` rewrites Host from `X-Forwarded-Host`. doorbell ignores that and reads the `Host` header. Behind TLS, it still uses `https`.
+
 ## Next.js Stripe webhook 400
 
 You called `req.json()` or the Pages body parser. Use the App Router export, or disable `bodyParser` and read the raw stream.
@@ -62,7 +64,7 @@ Stripe and GitHub POST. doorbell returns 405 on PUT unless `allowPut` is on.
 
 ## Does Origin work?
 
-Browsers send `Origin`. Stripe does not. doorbell refuses it so a form on another site never reaches HMAC. Set `allowOrigin` if a proxy adds the header.
+Browsers send `Origin` and `Referer`. Stripe does not. doorbell refuses them so a form on another site never reaches HMAC. Set `allowOrigin` / `allowReferer` if a proxy adds the header.
 
 ## License
 

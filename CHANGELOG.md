@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.12.0
+
+Express `req.get('host')` follows `trust proxy`. That is `X-Forwarded-Host`. Twilio HMAC includes the public URL, so a forwarded Host would verify a different URL than the one Twilio signed, or `http` when the box is behind TLS. doorbell reads the `Host` header only. It uses `https` unless the host is localhost, `127.0.0.1`, or `::1`. `http` to a public host is refused unless `allowInsecureTwilioUrl` is on. Set `publicUrl` in production.
+
+`Referer` is refused like `Origin`. Unsigned header bytes have a budget (`maxHeaderBytes`). A signing secret with a NUL or other control character is refused at boot. After HMAC, one JSON string still has a size cap (`maxJsonString`). Event ids that are not `[a-zA-Z0-9._:-]` become a body fingerprint so a Redis key cannot be `stripe:evt foo/../bar`. Event types longer than 128 characters, or with a control character, become `unknown`. Concurrent retries of one inflight id share a waiter cap (`maxStoreWaiters`) instead of growing an array forever.
+
+## 1.11.0
+
+`pathOnly` refuses to pick a provider from signature headers. The path has to name who knocked.
+
+PUT is 405 unless `allowPut` is on. `Content-Encoding` other than identity is refused so HMAC is not run on gzip of the JSON Stripe signed. `Origin` is refused (browsers send it, Stripe does not). `X-HTTP-Method-Override` is refused so POST cannot turn into a Meta GET handshake. A huge URL is refused.
+
+JSON after HMAC has to be an object, not `"true"` or an array. Nest depth and key count have a budget. A UTF-8 BOM is stripped for parse only. The HMAC still sees the raw bytes. Event ids longer than 256 characters become a body fingerprint so the store cannot be keyed on a 10k string.
+
+Signing secrets shorter than 8 characters are refused at boot. Eight rotation secrets is the default cap. The in-memory store evicts oldest unpinned slots at 50,000.
+
+Fetch string bodies send `text/plain`. That is allowed. `text/html` is not.
+
 ## 1.10.0
 
 A path with `.` or `..` (including `%2e%2e`) is refused. `new URL` would turn `/webhooks/github/../stripe` into Stripe and run the wrong provider.

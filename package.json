@@ -1,7 +1,7 @@
 {
   "name": "doorbell-js",
-  "version": "1.10.0",
-  "description": "HMAC the raw bytes. One handler for Stripe, GitHub, Slack, Shopify, and the Svix crowd.",
+  "version": "1.12.0",
+  "description": "Verify Stripe, GitHub, Slack, Shopify, Clerk, and Svix webhook signatures in Node.js. HMAC-SHA256 over the raw body, not JSON.parse. Works with Next.js, Express, Fastify, and Hono.",
   "license": "MIT",
   "type": "module",
   "author": "Hashim Khan <sardarhashim30@gmail.com>",
@@ -12,19 +12,41 @@
   "bugs": {
     "url": "https://github.com/Hashim1999164/doorbell-js/issues"
   },
-  "homepage": "https://github.com/Hashim1999164/doorbell-js#readme",
+  "homepage": "https://hashim1999164.github.io/doorbell-js/",
   "keywords": [
     "webhook",
     "webhooks",
+    "webhook-signature",
+    "webhook-verification",
     "stripe",
+    "stripe-webhooks",
+    "stripe-signature",
+    "constructEvent",
     "github",
+    "github-webhooks",
+    "x-hub-signature-256",
     "slack",
+    "slack-signing-secret",
     "shopify",
+    "shopify-webhooks",
     "svix",
     "clerk",
     "resend",
+    "standard-webhooks",
+    "paddle",
+    "linear",
+    "twilio",
+    "meta",
+    "facebook",
+    "hmac",
+    "hmac-sha256",
+    "raw-body",
+    "express",
+    "nextjs",
+    "fastify",
+    "hono",
     "signature",
-    "hmac"
+    "timing-safe"
   ],
   "sideEffects": false,
   "engines": {
@@ -48,12 +70,14 @@
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm test && npm run typecheck && npm run build"
+    "prepublishOnly": "npm test && npm run test:coverage && npm run typecheck && npm run build"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
+    "@vitest/coverage-v8": "^3.2.7",
     "tsup": "^8.5.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

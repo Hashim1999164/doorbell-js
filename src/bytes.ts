@@ -36,7 +36,9 @@ export function asRawBody(input: unknown): Uint8Array {
       hint: 'The request had nothing to sign. If this is Express, you are missing express.raw() on this route.',
     })
   }
-  if (input instanceof Uint8Array) return copyBytes(input)
+  if (input instanceof Uint8Array && !(typeof Buffer !== 'undefined' && Buffer.isBuffer(input))) {
+    return copyBytes(input)
+  }
   if (typeof Buffer !== 'undefined' && Buffer.isBuffer(input)) {
     return copyBytes(new Uint8Array(input.buffer, input.byteOffset, input.byteLength))
   }
@@ -73,7 +75,7 @@ export function toHex(bytes: Uint8Array): string {
   return out
 }
 
-export function parseBase64(value: string): Uint8Array | null {
+export function parseBase64(value: string, mode: 'auto' | 'web' = 'auto'): Uint8Array | null {
   try {
     const compact = value.trim().replace(/\s+/g, '')
     if (compact.length === 0) return null
@@ -81,7 +83,8 @@ export function parseBase64(value: string): Uint8Array | null {
     if (pad && pad[0].length > 2) return null
     const core = pad ? compact.slice(0, compact.length - pad[0].length) : compact
     if (core.length === 0 || !/^[A-Za-z0-9+/]+$/.test(core)) return null
-    if (typeof Buffer !== 'undefined') {
+    const useBuffer = mode === 'auto' && typeof Buffer !== 'undefined'
+    if (useBuffer) {
       const buf = Buffer.from(compact, 'base64')
       if (buf.byteLength === 0) return null
       const bytes = copyBytes(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength))
@@ -92,16 +95,18 @@ export function parseBase64(value: string): Uint8Array | null {
     const bin = atob(compact)
     const out = new Uint8Array(bin.length)
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-    const again = toBase64(out).replace(/=+$/, '')
+    const again = toBase64(out, 'web').replace(/=+$/, '')
     if (again !== core) return null
     return out
+    /* v8 ignore next 3 */
   } catch {
     return null
   }
 }
 
-export function toBase64(bytes: Uint8Array): string {
-  if (typeof Buffer !== 'undefined') {
+export function toBase64(bytes: Uint8Array, mode: 'auto' | 'web' = 'auto'): string {
+  const useBuffer = mode === 'auto' && typeof Buffer !== 'undefined'
+  if (useBuffer) {
     return Buffer.from(bytes).toString('base64')
   }
   let bin = ''

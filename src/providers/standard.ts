@@ -79,8 +79,7 @@ function v1Signatures(header: string): string[] {
   const parts = header.split(/[,\s]+/).map((p) => p.trim()).filter(Boolean)
   const out: string[] = []
   for (let i = 0; i < parts.length; i++) {
-    const part = parts[i]
-    if (!part) continue
+    const part = parts[i]!
     if (part === 'v1') {
       const next = parts[i + 1]
       if (next && !/^v\d+$/.test(next)) {
@@ -94,7 +93,6 @@ function v1Signatures(header: string): string[] {
       if (rest) out.push(rest)
       continue
     }
-    if (part.startsWith('v1,') && part.length > 3) out.push(part.slice(3))
   }
   return out
 }

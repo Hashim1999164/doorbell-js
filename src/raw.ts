@@ -32,7 +32,7 @@ export function captureFastifyBuffer(
     req.rawBody = asRawBody(body)
     done(null, body)
   } catch (err) {
-    done(err instanceof Error ? err : new Error(String(err)))
+    done(err as Error)
   }
 }
 
@@ -55,6 +55,7 @@ export async function readRequestBodyCapped(req: Request, maxBodyBytes: number):
     if (maxBodyBytes > 0 && total > maxBodyBytes) {
       try {
         await reader.cancel()
+        /* v8 ignore next 3 */
       } catch {
         // already over the cap
       }

@@ -315,13 +315,13 @@ describe('shopify linear paddle', () => {
 describe('detect', () => {
   it('picks stripe from headers when the path is generic', async () => {
     const payload = '{"id":"evt_x","type":"ping"}'
-    const secret = 'whsec_x'
+    const secret = 'whsec_xx'
     const ts = 1614556800
     const header = await signStripe(payload, secret, ts)
     const app = doorbell({
       now: NOW,
       stripe: { secret, onAny: async () => {} },
-      github: { secret: 'g', onAny: async () => {} },
+      github: { secret: 'github_webhook_secret', onAny: async () => {} },
     })
     const res = await app(
       new Request('http://shop.test/webhooks', {
@@ -407,7 +407,7 @@ describe('idempotency', () => {
     const store = new MemoryStore(NOW)
     let n = 0
     const payload = '{"ref":"refs/heads/main"}'
-    const secret = 's'
+    const secret = 'github_webhook_secret'
     const sig = await signGitHub(payload, secret)
     const app = doorbell({
       store,
@@ -772,7 +772,7 @@ describe('1.9 signed fields and sniff', () => {
 describe('1.10 path and signed versions', () => {
   it('refuses a path with .. so it cannot switch providers', async () => {
     const payload = '{"id":"evt_x","type":"ping"}'
-    const secret = 'whsec_x'
+    const secret = 'whsec_xx'
     const ts = 1614556800
     const header = await signStripe(payload, secret, ts)
     let ran = false
@@ -784,7 +784,7 @@ describe('1.10 path and signed versions', () => {
           ran = true
         },
       },
-      github: { secret: 'g', onAny: async () => {} },
+      github: { secret: 'github_webhook_secret', onAny: async () => {} },
     })
     const res = await app.handle({
       method: 'POST',
@@ -799,13 +799,13 @@ describe('1.10 path and signed versions', () => {
 
   it('refuses encoded dot segments too', async () => {
     const payload = '{"id":"evt_x","type":"ping"}'
-    const secret = 'whsec_x'
+    const secret = 'whsec_xx'
     const ts = 1614556800
     const header = await signStripe(payload, secret, ts)
     const app = doorbell({
       now: NOW,
       stripe: { secret, onAny: async () => {} },
-      github: { secret: 'g', onAny: async () => {} },
+      github: { secret: 'github_webhook_secret', onAny: async () => {} },
     })
     const res = await app.handle({
       method: 'POST',

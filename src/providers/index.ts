@@ -53,9 +53,6 @@ export function sniffHits(headers: HeaderMap, allowed: Set<ProviderName>): Provi
 export function sniffProvider(headers: HeaderMap, allowed: Set<ProviderName>): ProviderName | undefined {
   const unique = sniffHits(headers, allowed)
   if (unique.length === 1) return unique[0]
-  // GitHub sends both hub signature headers. Meta sniff already skips x-github-event,
-  // but a delivery id plus both signatures still looks like Meta too.
-  if (unique.length === 2 && unique.includes('github') && unique.includes('meta')) return 'github'
   return undefined
 }
 

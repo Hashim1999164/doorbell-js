@@ -20,3 +20,4 @@ export {
   signStripe,
   signTwilio,
 } from './sign.js'
+export { hmacSubtle } from './hmac.js'
