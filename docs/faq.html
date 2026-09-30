@@ -29,7 +29,7 @@
     <h2>Linear missing webhookTimestamp</h2>
     <p>That field in the signed JSON is the replay clock. doorbell refuses a body without it.</p>
     <h2>Twilio signature did not match</h2>
-    <p>Pass the public URL Twilio called, not <code>req.url</code> on localhost.</p>
+    <p>Pass the public URL Twilio called, not <code>req.url</code> on localhost. doorbell reads the <code>Host</code> header, not Express <code>trust proxy</code>. <code>http</code> is only for localhost. Behind TLS, set <code>publicUrl</code> to the https URL Twilio signed.</p>
     <p><a href="https://github.com/Hashim1999164/doorbell-js/blob/main/docs/faq.md">Markdown FAQ</a> · <a href="https://github.com/Hashim1999164/doorbell-js">GitHub</a></p>
     <footer>doorbell-js · FAQ</footer>
   </main>
