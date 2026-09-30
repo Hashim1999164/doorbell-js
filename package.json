@@ -65,7 +65,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/img"
   ],
   "scripts": {
     "build": "tsup",
