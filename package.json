@@ -1,6 +1,6 @@
 {
   "name": "doorbell-js",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "Verify Stripe, GitHub, Slack, Shopify, Clerk, and Svix webhook signatures in Node.js. HMAC-SHA256 over the raw body, not JSON.parse. Works with Next.js, Express, Fastify, and Hono.",
   "license": "MIT",
   "type": "module",

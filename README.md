@@ -104,7 +104,7 @@ Put the name in the path when you take more than one: `/webhooks/stripe`, `/webh
 
 HMAC first, then the clock (same order as stripe-node). Compare digest bytes, not hex strings. A missing header still burns HMAC so that path is not faster.
 
-GitHub and Shopify `event.type` come from the **signed JSON**, not unsigned topic/event headers. Twilio uses `https` unless the host is localhost; set `publicUrl` in production. Express `trust proxy` Host is ignored.
+GitHub and Shopify `event.type` come from the **signed JSON**, not unsigned topic/event headers. Twilio uses `https` unless the host is localhost; set `publicUrl` in production. Express `trust proxy` Host is ignored. `Transfer-Encoding: chunked`, a mismatched `Content-Length`, `Cookie`, and `Expect` are refused. Replies are `Cache-Control: no-store`.
 
 More of the sharp edges (path dots, Origin, gzip, JSON budgets): [CHANGELOG](CHANGELOG.md) and [FAQ](docs/faq.md).
 

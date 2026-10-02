@@ -64,7 +64,9 @@ Stripe and GitHub POST. doorbell returns 405 on PUT unless `allowPut` is on.
 
 ## Does Origin work?
 
-Browsers send `Origin` and `Referer`. Stripe does not. doorbell refuses them so a form on another site never reaches HMAC. Set `allowOrigin` / `allowReferer` if a proxy adds the header.
+Browsers send `Origin` and `Referer`. Stripe does not. doorbell refuses them so a form on another site never reaches HMAC. Set `allowOrigin` / `allowReferer` if a proxy adds the header. Same for `Cookie` and `Expect`.
+
+`Transfer-Encoding: chunked` with a buffered body is refused. If `Content-Length` is present and does not match the bytes we read, the request is refused.
 
 ## License
 

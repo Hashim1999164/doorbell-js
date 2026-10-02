@@ -13,6 +13,15 @@ export function lintSecret(provider: ProviderName, secret: string): void {
     })
   }
 
+  // Dashboard secrets are ASCII. Non-ASCII is usually a paste of a fancy dash or emoji.
+  if (/[^\x20-\x7e]/.test(s)) {
+    throw new DoorbellError('That signing secret has a non-ASCII character.', {
+      code: 'weak_secret',
+      status: 500,
+      hint: 'Webhook secrets from Stripe, GitHub, and Slack are plain ASCII. A curly quote or emoji means the paste went wrong.',
+    })
+  }
+
   if (s.length < 8) {
     throw new DoorbellError('That signing secret is too short.', {
       code: 'weak_secret',

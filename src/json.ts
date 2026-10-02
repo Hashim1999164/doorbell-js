@@ -111,3 +111,37 @@ export function assertJsonBudget(
   }
   walk(value, 0)
 }
+
+/**
+ * After Twilio HMAC. A signed form can still be a thousand empty keys that
+ * blow Object.keys in the handler. Cap unique keys and total value length.
+ */
+export function assertFormBudget(
+  payload: unknown,
+  opts: { maxKeys: number; maxValueChars: number },
+): void {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return
+  const keys = Object.keys(payload)
+  if (keys.length > opts.maxKeys) {
+    throw new DoorbellError('Form has too many fields.', {
+      code: 'form_too_wide',
+      hint: 'HMAC passed. A signed Twilio body can still be a key bomb. Raise maxFormKeys if you want it.',
+    })
+  }
+  let chars = 0
+  for (const k of keys) {
+    const v = (payload as Record<string, unknown>)[k]
+    if (typeof v === 'string') chars += v.length
+    else if (Array.isArray(v)) {
+      for (const item of v) {
+        if (typeof item === 'string') chars += item.length
+      }
+    }
+    if (chars > opts.maxValueChars) {
+      throw new DoorbellError('Form values are too long.', {
+        code: 'form_too_long',
+        hint: 'Raise maxFormValueChars if Twilio really sends that much.',
+      })
+    }
+  }
+}

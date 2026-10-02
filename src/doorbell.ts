@@ -4,7 +4,7 @@ import { handshake } from './handshake.js'
 import { assertHeaderBudget, contentTypeAllowed, header, headerMap } from './headers.js'
 import { bodyFingerprint } from './hash.js'
 import { MemoryStore, type IdempotencyStore } from './idempotency.js'
-import { assertJsonBudget, assertJsonObject, hasOwn, stringField } from './json.js'
+import { assertFormBudget, assertJsonBudget, assertJsonObject, hasOwn, stringField } from './json.js'
 import { pathHasDotSegments, providerFromPath, providers, sniffHits } from './providers/index.js'
 import { rawFromNodeRequest, readRequestBodyCapped } from './raw.js'
 import { lintSecret } from './secrets.js'
@@ -73,6 +73,19 @@ export type DoorbellConfig = {
    * Production needs https, or set publicUrl to the https URL Twilio called.
    */
   allowInsecureTwilioUrl?: boolean
+  /**
+   * Browsers send Cookie. Stripe does not. Refuse it so a session cookie
+   * cannot ride along a forged browser POST that still has to pass HMAC.
+   */
+  allowCookie?: boolean
+  /** Expect: 100-continue is not how Stripe posts. */
+  allowExpect?: boolean
+  /** After Twilio HMAC. Unique form fields. */
+  maxFormKeys?: number
+  /** After Twilio HMAC. Total characters across all form values. */
+  maxFormValueChars?: number
+  /** Query string length on the URL (Meta handshake needs a short one). */
+  maxQueryLength?: number
 }
 
 export type NormalizedRequest = {
@@ -167,6 +180,12 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     for (const secret of secrets) lintSecret(name, secret)
   }
 
+  assertPositiveMs(config.idempotencyTtlMs, 'idempotencyTtlMs', 31 * 24 * 60 * 60 * 1000)
+  assertPositiveMs(config.handlerTimeoutMs, 'handlerTimeoutMs', 15 * 60 * 1000)
+  if (config.maxBodyBytes != null && config.maxBodyBytes < 0) {
+    throw new DoorbellError('maxBodyBytes cannot be negative.', { code: 'bad_config', status: 500 })
+  }
+
   const handlerTimeoutMs = config.handlerTimeoutMs
   const inflightHoldMs = Math.max(
     60_000,
@@ -215,7 +234,12 @@ export function doorbell(config: DoorbellConfig): Doorbell {
       })
     }
 
+    assertQueryBudget(req.url, config.maxQueryLength ?? 2048)
     assertHeaderBudget(headers, config.maxHeaderBytes ?? 32_768)
+    assertTransferEncoding(headers)
+    assertContentLengthMatches(headers, raw)
+    assertExpect(headers, config.allowExpect)
+    assertCookie(headers, config.allowCookie)
 
     const encoding = header(headers, 'content-encoding')
     if (encoding) {
@@ -330,13 +354,20 @@ export function doorbell(config: DoorbellConfig): Doorbell {
 
     const payload = provider.parse(raw)
     if (name !== 'twilio') assertJsonObject(payload)
-    assertJsonBudget(payload, {
-      maxDepth: config.maxJsonDepth ?? 40,
-      maxKeys: config.maxJsonKeys ?? 20_000,
-      maxString: config.maxJsonString ?? 1_000_000,
-    })
+    if (name === 'twilio') {
+      assertFormBudget(payload, {
+        maxKeys: config.maxFormKeys ?? 256,
+        maxValueChars: config.maxFormValueChars ?? 100_000,
+      })
+    } else {
+      assertJsonBudget(payload, {
+        maxDepth: config.maxJsonDepth ?? 40,
+        maxKeys: config.maxJsonKeys ?? 20_000,
+        maxString: config.maxJsonString ?? 1_000_000,
+      })
+    }
     const ac = new AbortController()
-    const event: VerifiedEvent = {
+    const event: VerifiedEvent = Object.freeze({
       provider: name,
       id: capEventId(provider.eventId(headers, payload, raw), raw),
       type: capEventType(provider.eventType(headers, payload)),
@@ -346,7 +377,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
       signal: ac.signal,
       // Stripe-Account is not in the HMAC. Connect account id lives on the signed JSON.
       account: capAccount(name === 'stripe' ? stringField(payload, 'account') : undefined),
-    }
+    })
 
     // GitHub ping is the signed zen field, even if it is empty. That header is not in the HMAC.
     if (name === 'github' && hasOwn(payload, 'zen')) {
@@ -425,7 +456,11 @@ export function doorbell(config: DoorbellConfig): Doorbell {
       if (err instanceof DoorbellError) {
         return new Response(err.toText(), {
           status: err.status,
-          headers: { 'content-type': 'text/plain; charset=utf-8' },
+          headers: {
+            'content-type': 'text/plain; charset=utf-8',
+            'cache-control': 'no-store',
+            'x-content-type-options': 'nosniff',
+          },
         })
       }
       throw err
@@ -446,7 +481,13 @@ export function doorbell(config: DoorbellConfig): Doorbell {
         raw = rawFromNodeRequest(req)
       } catch (err) {
         if (err instanceof DoorbellError) {
-          res.setHeader?.('content-type', 'text/plain; charset=utf-8')
+          for (const [k, v] of Object.entries({
+            'content-type': 'text/plain; charset=utf-8',
+            'cache-control': 'no-store',
+            'x-content-type-options': 'nosniff',
+          })) {
+            res.setHeader?.(k, v)
+          }
           res.status(err.status).send(err.toText())
           return
         }
@@ -458,7 +499,9 @@ export function doorbell(config: DoorbellConfig): Doorbell {
         headers: headerMap(req.headers),
         raw,
       })
-      res.setHeader?.('content-type', result.headers['content-type']!)
+      for (const [k, v] of Object.entries(result.headers)) {
+        res.setHeader?.(k, v)
+      }
       res.status(result.status).send(result.body)
     } catch (err) {
       if (next) next(err)
@@ -575,15 +618,105 @@ async function awaitHandler(work: Promise<void>, timeoutMs: number | undefined):
 }
 
 function text(status: number, body: string): NormalizedResponse {
-  return { status, body, headers: { 'content-type': 'text/plain; charset=utf-8' } }
+  return {
+    status,
+    body,
+    headers: {
+      'content-type': 'text/plain; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    },
+  }
 }
 
 function json(status: number, body: unknown): NormalizedResponse {
   return {
     status,
     body: JSON.stringify(body),
-    headers: { 'content-type': 'application/json; charset=utf-8' },
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    },
   }
+}
+
+function assertPositiveMs(value: number | undefined, name: string, max: number): void {
+  if (value == null) return
+  if (!Number.isFinite(value) || value < 0) {
+    throw new DoorbellError(`${name} must be a non-negative number.`, {
+      code: 'bad_config',
+      status: 500,
+    })
+  }
+  if (value > max) {
+    throw new DoorbellError(`${name} is huge.`, {
+      code: 'bad_config',
+      status: 500,
+      hint: `Cap is ${max} ms. That is enough for a handler or a duplicate window.`,
+    })
+  }
+}
+
+function assertQueryBudget(url: string | undefined, max: number): void {
+  if (!url || max <= 0) return
+  const q = url.indexOf('?')
+  if (q === -1) return
+  const hash = url.indexOf('#', q)
+  const query = hash === -1 ? url.slice(q + 1) : url.slice(q + 1, hash)
+  if (query.length > max) {
+    throw new DoorbellError('Webhook query string is huge.', {
+      code: 'bad_url',
+      hint: 'Meta hub.challenge is short. A 100KB query string is not a webhook.',
+    })
+  }
+}
+
+function assertTransferEncoding(headers: HeaderMap): void {
+  const te = header(headers, 'transfer-encoding')
+  if (!te) return
+  const first = te.split(',')[0]!.trim().toLowerCase()
+  if (!first || first === 'identity') return
+  throw new DoorbellError('Transfer-Encoding is refused.', {
+    code: 'bad_encoding',
+    hint: 'The body is already buffered. chunked or compressed Transfer-Encoding next to Content-Length is how HTTP smuggling starts. Stripe posts a plain body.',
+  })
+}
+
+function assertContentLengthMatches(headers: HeaderMap, raw: Uint8Array): void {
+  const cl = header(headers, 'content-length')
+  if (cl == null || cl.trim() === '') return
+  if (!/^[0-9]{1,12}$/.test(cl.trim())) {
+    throw new DoorbellError('Content-Length is not a digit length.', {
+      code: 'bad_content_length',
+      hint: 'A webhook Content-Length is a plain integer matching the body bytes.',
+    })
+  }
+  const n = Number.parseInt(cl.trim(), 10)
+  if (n !== raw.byteLength) {
+    throw new DoorbellError('Content-Length does not match the body.', {
+      code: 'bad_content_length',
+      hint: 'The bytes we read do not match Content-Length. A proxy may have truncated or padded the body after Stripe signed it.',
+    })
+  }
+}
+
+function assertExpect(headers: HeaderMap, allow: boolean | undefined): void {
+  if (allow) return
+  if (!header(headers, 'expect')) return
+  throw new DoorbellError('Expect header is refused.', {
+    code: 'bad_expect',
+    hint: 'Stripe does not send Expect: 100-continue. Set allowExpect if a proxy adds it.',
+  })
+}
+
+function assertCookie(headers: HeaderMap, allow: boolean | undefined): void {
+  if (allow) return
+  if (!header(headers, 'cookie')) return
+  throw new DoorbellError('Cookie header on a webhook. Browsers send that. Stripe does not.', {
+    code: 'browser_cookie',
+    hint: 'A session cookie on this route means a browser can POST here. HMAC still has to match. Set allowCookie if a proxy adds Cookie.',
+  })
 }
 
 function resolveUrl(

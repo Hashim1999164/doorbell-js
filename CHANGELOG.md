@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.13.0
+
+`Transfer-Encoding: chunked` next to a buffered body is refused. That pairing is how HTTP request smuggling starts. Stripe posts a plain body. If `Content-Length` is present and does not match the bytes we read, the request is refused. A proxy truncated or padded after the seal.
+
+`Cookie` and `Expect` are refused like `Origin`. Browsers send cookies. Stripe does not. Set `allowCookie` / `allowExpect` if a proxy adds them.
+
+Replies send `Cache-Control: no-store` and `X-Content-Type-Options: nosniff` so a CDN does not cache a webhook 200. The verified event object is frozen so a handler cannot rewrite `event.id` after the claim.
+
+Twilio form fields have a budget after HMAC (`maxFormKeys`, `maxFormValueChars`). A signed key bomb still blows `Object.keys` in your handler without that cap. Query strings longer than 2KB are refused. Signing secrets must be ASCII. `handlerTimeoutMs` and `idempotencyTtlMs` are checked at boot.
+
 ## 1.12.0
 
 Express `req.get('host')` follows `trust proxy`. That is `X-Forwarded-Host`. Twilio HMAC includes the public URL, so a forwarded Host would verify a different URL than the one Twilio signed, or `http` when the box is behind TLS. doorbell reads the `Host` header only. It uses `https` unless the host is localhost, `127.0.0.1`, or `::1`. `http` to a public host is refused unless `allowInsecureTwilioUrl` is on. Set `publicUrl` in production.
