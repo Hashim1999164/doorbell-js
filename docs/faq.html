@@ -30,6 +30,8 @@
     <p>That field in the signed JSON is the replay clock. doorbell refuses a body without it.</p>
     <h2>Twilio signature did not match</h2>
     <p>Pass the public URL Twilio called, not <code>req.url</code> on localhost. doorbell reads the <code>Host</code> header, not Express <code>trust proxy</code>. <code>http</code> is only for localhost. Behind TLS, set <code>publicUrl</code> to the https URL Twilio signed.</p>
+    <h2>Transfer-Encoding / Content-Length</h2>
+    <p><code>chunked</code> next to a buffered body is refused. If <code>Content-Length</code> is present and does not match the bytes we read, refuse. <code>Cookie</code> and <code>Expect</code> are refused like <code>Origin</code>.</p>
     <p><a href="https://github.com/Hashim1999164/doorbell-js/blob/main/docs/faq.md">Markdown FAQ</a> · <a href="https://github.com/Hashim1999164/doorbell-js">GitHub</a></p>
     <footer>doorbell-js · FAQ</footer>
   </main>

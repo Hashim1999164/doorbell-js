@@ -91,7 +91,7 @@ export const POST = doorbell({
       <li><a href="./faq.html">Slack invalid_signature, Shopify HMAC, Clerk / Svix, Twilio URL</a></li>
     </ul>
     <h2>What it checks</h2>
-    <p>HMAC first, then the clock, the way stripe-node does. Missing headers still burn HMAC so that path is not faster. GitHub and Shopify do not get <code>event.type</code> from unsigned headers. Compare digest bytes, not hex strings. Express does not trust <code>X-Forwarded-Host</code> for the Twilio URL. <code>http</code> is only localhost.</p>
+    <p>HMAC first, then the clock, the way stripe-node does. Missing headers still burn HMAC so that path is not faster. GitHub and Shopify do not get <code>event.type</code> from unsigned headers. Compare digest bytes, not hex strings. Express does not trust <code>X-Forwarded-Host</code> for the Twilio URL. <code>http</code> is only localhost. <code>Transfer-Encoding: chunked</code> and a mismatched <code>Content-Length</code> are refused. Replies are <code>Cache-Control: no-store</code>.</p>
     <p>Providers: Stripe, GitHub, Slack, Shopify, Svix, Clerk, Resend, Linear, Paddle, Meta, Twilio.</p>
     <p>MIT. <a href="https://github.com/Hashim1999164/doorbell-js">Source and README</a>.</p>
     <footer>Hashim Khan · doorbell-js · HMAC the raw bytes</footer>
