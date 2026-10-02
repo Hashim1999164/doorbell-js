@@ -80,6 +80,18 @@ export type DoorbellConfig = {
   allowCookie?: boolean
   /** Expect: 100-continue is not how Stripe posts. */
   allowExpect?: boolean
+  /**
+   * Browsers send Authorization on same-origin XHR. Stripe does not.
+   * A Bearer token on a webhook route is the wrong kind of auth.
+   */
+  allowAuthorization?: boolean
+  /**
+   * Browsers send Sec-Fetch-Site / Sec-Fetch-Mode. Stripe does not.
+   * Those headers mean a page initiated the request.
+   */
+  allowSecFetch?: boolean
+  /** Cap how many handlers can run at once in this process. Extra callers get 503. */
+  maxInflight?: number
   /** After Twilio HMAC. Unique form fields. */
   maxFormKeys?: number
   /** After Twilio HMAC. Total characters across all form values. */
@@ -185,8 +197,13 @@ export function doorbell(config: DoorbellConfig): Doorbell {
   if (config.maxBodyBytes != null && config.maxBodyBytes < 0) {
     throw new DoorbellError('maxBodyBytes cannot be negative.', { code: 'bad_config', status: 500 })
   }
+  if (config.maxInflight != null && (!Number.isFinite(config.maxInflight) || config.maxInflight < 1)) {
+    throw new DoorbellError('maxInflight must be at least 1.', { code: 'bad_config', status: 500 })
+  }
 
   const handlerTimeoutMs = config.handlerTimeoutMs
+  let inflightHandlers = 0
+  const maxInflight = config.maxInflight ?? 0
   const inflightHoldMs = Math.max(
     60_000,
     (handlerTimeoutMs && handlerTimeoutMs > 0 ? handlerTimeoutMs : 0) + 60_000,
@@ -240,6 +257,8 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     assertContentLengthMatches(headers, raw)
     assertExpect(headers, config.allowExpect)
     assertCookie(headers, config.allowCookie)
+    assertAuthorization(headers, config.allowAuthorization)
+    assertSecFetch(headers, config.allowSecFetch)
 
     const encoding = header(headers, 'content-encoding')
     if (encoding) {
@@ -406,6 +425,12 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     }
     await store.pin?.(key)
 
+    if (maxInflight > 0 && inflightHandlers >= maxInflight) {
+      await store.drop(key)
+      return text(503, 'Too many webhook handlers running. Sender should retry.', { retryAfterSec: 2 })
+    }
+
+    inflightHandlers += 1
     const work = Promise.resolve(fn(event)).then(() => undefined)
     try {
       await awaitHandler(work, handlerTimeoutMs)
@@ -420,7 +445,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
           () => store.drop(key).catch(() => undefined),
         )
         config.onError?.(err, event)
-        return text(err.status, err.toText())
+        return text(err.status, err.toText(), { retryAfterSec: 5 })
       }
       ac.abort()
       await store.drop(key)
@@ -431,8 +456,12 @@ export function doorbell(config: DoorbellConfig): Doorbell {
         cause: err,
         hint: err instanceof Error ? err.message : String(err),
       })
-      return text(wrapped.status, wrapped.toText())
+      return text(wrapped.status, wrapped.toText(), { retryAfterSec: 5 })
+      /* v8 ignore start */
+    } finally {
+      inflightHandlers -= 1
     }
+    /* v8 ignore stop */
   }
 
   const guarded = async (req: NormalizedRequest): Promise<NormalizedResponse> => {
@@ -617,16 +646,18 @@ async function awaitHandler(work: Promise<void>, timeoutMs: number | undefined):
   }
 }
 
-function text(status: number, body: string): NormalizedResponse {
-  return {
-    status,
-    body,
-    headers: {
-      'content-type': 'text/plain; charset=utf-8',
-      'cache-control': 'no-store',
-      'x-content-type-options': 'nosniff',
-    },
+function text(
+  status: number,
+  body: string,
+  opts?: { retryAfterSec?: number },
+): NormalizedResponse {
+  const headers: Record<string, string> = {
+    'content-type': 'text/plain; charset=utf-8',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
   }
+  if (opts?.retryAfterSec != null) headers['retry-after'] = String(opts.retryAfterSec)
+  return { status, body, headers }
 }
 
 function json(status: number, body: unknown): NormalizedResponse {
@@ -716,6 +747,30 @@ function assertCookie(headers: HeaderMap, allow: boolean | undefined): void {
   throw new DoorbellError('Cookie header on a webhook. Browsers send that. Stripe does not.', {
     code: 'browser_cookie',
     hint: 'A session cookie on this route means a browser can POST here. HMAC still has to match. Set allowCookie if a proxy adds Cookie.',
+  })
+}
+
+function assertAuthorization(headers: HeaderMap, allow: boolean | undefined): void {
+  if (allow) return
+  if (!header(headers, 'authorization')) return
+  throw new DoorbellError('Authorization header on a webhook. Stripe uses the signature, not Bearer.', {
+    code: 'browser_authorization',
+    hint: 'Webhook auth is the HMAC. A Bearer token here usually means a browser or an API client hit the wrong route. Set allowAuthorization if you gate the path yourself.',
+  })
+}
+
+function assertSecFetch(headers: HeaderMap, allow: boolean | undefined): void {
+  if (allow) return
+  if (
+    !header(headers, 'sec-fetch-site') &&
+    !header(headers, 'sec-fetch-mode') &&
+    !header(headers, 'sec-fetch-dest')
+  ) {
+    return
+  }
+  throw new DoorbellError('Sec-Fetch headers on a webhook. Browsers send those. Stripe does not.', {
+    code: 'browser_sec_fetch',
+    hint: 'Sec-Fetch-Site means a page initiated this request. Set allowSecFetch if a proxy adds them.',
   })
 }
 

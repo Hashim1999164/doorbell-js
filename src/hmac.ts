@@ -31,14 +31,17 @@ async function hmac(
   /* v8 ignore stop */
 }
 
-/** WebCrypto path. Workers and browsers land here. Tests call this directly. */
+/**
+ * WebCrypto path. Workers and browsers use globalThis.crypto.
+ * Node 18 only exposes SubtleCrypto on crypto.webcrypto, not globalThis.
+ */
 export async function hmacSubtle(
   key: Uint8Array,
   data: Uint8Array,
   hash: 'SHA-256' | 'SHA-1' = 'SHA-256',
 ): Promise<Uint8Array> {
-  /* v8 ignore next 4 */
-  const subtle = globalThis.crypto?.subtle
+  const subtle = await resolveSubtle()
+  /* v8 ignore next 3 */
   if (!subtle) {
     throw new Error('No HMAC implementation on this runtime')
   }
@@ -53,8 +56,55 @@ export async function hmacSubtle(
   return new Uint8Array(sig)
 }
 
+async function resolveSubtle(): Promise<{
+  importKey: (
+    format: string,
+    keyData: ArrayBuffer,
+    algorithm: { name: string; hash: string },
+    extractable: boolean,
+    keyUsages: string[],
+  ) => Promise<object>
+  sign: (algorithm: string, key: object, data: ArrayBuffer) => Promise<ArrayBuffer>
+} | undefined> {
+  const fromGlobal = globalThis.crypto?.subtle
+  if (fromGlobal) {
+    return fromGlobal as {
+      importKey: (
+        format: string,
+        keyData: ArrayBuffer,
+        algorithm: { name: string; hash: string },
+        extractable: boolean,
+        keyUsages: string[],
+      ) => Promise<object>
+      sign: (algorithm: string, key: object, data: ArrayBuffer) => Promise<ArrayBuffer>
+    }
+  }
+  try {
+    const node = await import('node:crypto')
+    const subtle = node.webcrypto?.subtle
+    /* v8 ignore next */
+    if (!subtle) return undefined
+    return subtle as {
+      importKey: (
+        format: string,
+        keyData: ArrayBuffer,
+        algorithm: { name: string; hash: string },
+        extractable: boolean,
+        keyUsages: string[],
+      ) => Promise<object>
+      sign: (algorithm: string, key: object, data: ArrayBuffer) => Promise<ArrayBuffer>
+    }
+    /* v8 ignore next 3 */
+  } catch {
+    return undefined
+  }
+}
+
+/** Fresh ArrayBuffer. WebCrypto rejects views over a SharedArrayBuffer or a pooled Buffer. */
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+  const out = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(out).set(bytes)
+  return out
 }
 
 export async function hmacSha256Hex(key: Uint8Array, data: Uint8Array): Promise<string> {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.14.0
+
+Node 18 CI was failing because `globalThis.crypto.subtle` does not exist there. WebCrypto lives on `crypto.webcrypto` until Node 19. `hmacSubtle` now falls back to `node:crypto.webcrypto`, and feeds WebCrypto a fresh `ArrayBuffer` instead of a view over a pooled Buffer.
+
+`Authorization` and `Sec-Fetch-*` are refused like `Origin`. Browsers send them. Stripe does not. Set `allowAuthorization` / `allowSecFetch` if a proxy adds them.
+
+`maxInflight` caps how many handlers can run at once in this process. Extra callers get 503 with `Retry-After`. Handler timeout and handler throw also send `Retry-After: 5` so Stripe knows to back off.
+
 ## 1.13.0
 
 `Transfer-Encoding: chunked` next to a buffered body is refused. That pairing is how HTTP request smuggling starts. Stripe posts a plain body. If `Content-Length` is present and does not match the bytes we read, the request is refused. A proxy truncated or padded after the seal.

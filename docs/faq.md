@@ -68,6 +68,8 @@ Browsers send `Origin` and `Referer`. Stripe does not. doorbell refuses them so 
 
 `Transfer-Encoding: chunked` with a buffered body is refused. If `Content-Length` is present and does not match the bytes we read, the request is refused.
 
+`Authorization` and `Sec-Fetch-*` are refused the same way. WebCrypto on Node 18 uses `crypto.webcrypto` (globalThis.crypto.subtle only exists from Node 19).
+
 ## License
 
 MIT. [Hashim1999164/doorbell-js](https://github.com/Hashim1999164/doorbell-js)
