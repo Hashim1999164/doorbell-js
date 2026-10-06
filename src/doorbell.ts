@@ -4,7 +4,7 @@ import { handshake } from './handshake.js'
 import { assertHeaderBudget, contentTypeAllowed, header, headerMap } from './headers.js'
 import { bodyFingerprint } from './hash.js'
 import { MemoryStore, type IdempotencyStore } from './idempotency.js'
-import { assertFormBudget, assertJsonBudget, assertJsonObject, hasOwn, stringField } from './json.js'
+import { assertFormBudget, assertJsonBudget, assertJsonObject, booleanField, deepFreeze, hasOwn, stringField } from './json.js'
 import { pathHasDotSegments, providerFromPath, providers, sniffHits } from './providers/index.js'
 import { rawFromNodeRequest, readRequestBodyCapped } from './raw.js'
 import { lintSecret } from './secrets.js'
@@ -90,6 +90,13 @@ export type DoorbellConfig = {
    * Those headers mean a page initiated the request.
    */
   allowSecFetch?: boolean
+  /**
+   * Browsers send Access-Control-Request-* on a CORS preflight.
+   * A webhook is not a CORS API. Refuse the probe.
+   */
+  allowCorsProbe?: boolean
+  /** X-Requested-With: XMLHttpRequest is a browser fingerprint. Stripe does not send it. */
+  allowXhr?: boolean
   /** Cap how many handlers can run at once in this process. Extra callers get 503. */
   maxInflight?: number
   /** After Twilio HMAC. Unique form fields. */
@@ -259,6 +266,8 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     assertCookie(headers, config.allowCookie)
     assertAuthorization(headers, config.allowAuthorization)
     assertSecFetch(headers, config.allowSecFetch)
+    assertCorsProbe(headers, config.allowCorsProbe)
+    assertXhr(headers, config.allowXhr)
 
     const encoding = header(headers, 'content-encoding')
     if (encoding) {
@@ -385,6 +394,7 @@ export function doorbell(config: DoorbellConfig): Doorbell {
         maxString: config.maxJsonString ?? 1_000_000,
       })
     }
+    deepFreeze(payload)
     const ac = new AbortController()
     const event: VerifiedEvent = Object.freeze({
       provider: name,
@@ -396,6 +406,8 @@ export function doorbell(config: DoorbellConfig): Doorbell {
       signal: ac.signal,
       // Stripe-Account is not in the HMAC. Connect account id lives on the signed JSON.
       account: capAccount(name === 'stripe' ? stringField(payload, 'account') : undefined),
+      // livemode is on the signed Stripe JSON. Other providers leave it undefined.
+      livemode: name === 'stripe' ? booleanField(payload, 'livemode') : undefined,
     })
 
     // GitHub ping is the signed zen field, even if it is empty. That header is not in the HMAC.
@@ -705,13 +717,22 @@ function assertQueryBudget(url: string | undefined, max: number): void {
 
 function assertTransferEncoding(headers: HeaderMap): void {
   const te = header(headers, 'transfer-encoding')
-  if (!te) return
-  const first = te.split(',')[0]!.trim().toLowerCase()
-  if (!first || first === 'identity') return
-  throw new DoorbellError('Transfer-Encoding is refused.', {
-    code: 'bad_encoding',
-    hint: 'The body is already buffered. chunked or compressed Transfer-Encoding next to Content-Length is how HTTP smuggling starts. Stripe posts a plain body.',
-  })
+  if (te) {
+    for (const part of te.split(',')) {
+      const t = part.trim().toLowerCase()
+      if (!t || t === 'identity') continue
+      throw new DoorbellError('Transfer-Encoding is refused.', {
+        code: 'bad_encoding',
+        hint: 'The body is already buffered. chunked, compressed, or trailers next to Content-Length is how HTTP smuggling starts. Stripe posts a plain body.',
+      })
+    }
+  }
+  if (header(headers, 'trailer')) {
+    throw new DoorbellError('Trailer header is refused.', {
+      code: 'bad_encoding',
+      hint: 'HTTP trailers after the body can rewrite headers a proxy already trusted. Stripe does not send Trailer.',
+    })
+  }
 }
 
 function assertContentLengthMatches(headers: HeaderMap, raw: Uint8Array): void {
@@ -771,6 +792,29 @@ function assertSecFetch(headers: HeaderMap, allow: boolean | undefined): void {
   throw new DoorbellError('Sec-Fetch headers on a webhook. Browsers send those. Stripe does not.', {
     code: 'browser_sec_fetch',
     hint: 'Sec-Fetch-Site means a page initiated this request. Set allowSecFetch if a proxy adds them.',
+  })
+}
+
+function assertCorsProbe(headers: HeaderMap, allow: boolean | undefined): void {
+  if (allow) return
+  if (
+    !header(headers, 'access-control-request-method') &&
+    !header(headers, 'access-control-request-headers')
+  ) {
+    return
+  }
+  throw new DoorbellError('CORS preflight headers on a webhook. Browsers send those. Stripe does not.', {
+    code: 'browser_cors',
+    hint: 'A webhook is not a CORS API. Access-Control-Request-* means a page is probing this route. Set allowCorsProbe if a proxy adds them.',
+  })
+}
+
+function assertXhr(headers: HeaderMap, allow: boolean | undefined): void {
+  if (allow) return
+  if (!header(headers, 'x-requested-with')) return
+  throw new DoorbellError('X-Requested-With on a webhook. Browsers send that for XHR. Stripe does not.', {
+    code: 'browser_xhr',
+    hint: 'XMLHttpRequest fingerprints this as a page call. Set allowXhr if a proxy adds it.',
   })
 }
 

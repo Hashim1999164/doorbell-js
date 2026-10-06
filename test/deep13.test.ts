@@ -176,11 +176,10 @@ describe('1.13 intake', () => {
       url: '/webhooks/stripe',
       headers: headerMap({
         'stripe-signature': header,
-        'transfer-encoding': '  , chunked',
+        'transfer-encoding': '  , identity',
       }),
       raw: utf8(payload),
     })
-    // first part after split/trim is empty -> allowed, then HMAC runs
     expect(res.status).toBe(200)
   })
 

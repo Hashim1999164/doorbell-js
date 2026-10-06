@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.15.0
+
+CORS preflight headers (`Access-Control-Request-*`) and `X-Requested-With` are refused. A webhook is not a browser API. Set `allowCorsProbe` / `allowXhr` if a proxy adds them.
+
+`Trailer` is refused. `Transfer-Encoding` is scanned for every token, not only the first, so `identity, trailers` and `, chunked` cannot sneak past.
+
+After HMAC, `JSON.parse` turning `1e309` into `Infinity` is refused. The payload tree is deep-frozen so a handler cannot rewrite nested fields after the store claimed the id. Stripe `livemode` is taken from the signed JSON onto `event.livemode`.
+
 ## 1.14.0
 
 Node 18 CI was failing because `globalThis.crypto.subtle` does not exist there. WebCrypto lives on `crypto.webcrypto` until Node 19. `hmacSubtle` now falls back to `node:crypto.webcrypto`, and feeds WebCrypto a fresh `ArrayBuffer` instead of a view over a pooled Buffer.

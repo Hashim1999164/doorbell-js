@@ -24,6 +24,8 @@ export type VerifiedEvent = {
   signal: AbortSignal
   /** Stripe Connect account id from the signed JSON. Not the unsigned Stripe-Account header. */
   account: string | undefined
+  /** Stripe livemode from the signed JSON. Undefined for other providers. */
+  livemode: boolean | undefined
 }
 
 export type VerifyCtx = {

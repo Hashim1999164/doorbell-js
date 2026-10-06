@@ -68,7 +68,7 @@ Browsers send `Origin` and `Referer`. Stripe does not. doorbell refuses them so 
 
 `Transfer-Encoding: chunked` with a buffered body is refused. If `Content-Length` is present and does not match the bytes we read, the request is refused.
 
-`Authorization` and `Sec-Fetch-*` are refused the same way. WebCrypto on Node 18 uses `crypto.webcrypto` (globalThis.crypto.subtle only exists from Node 19).
+`Authorization` and `Sec-Fetch-*` are refused the same way. WebCrypto on Node 18 uses `crypto.webcrypto` (globalThis.crypto.subtle only exists from Node 19). CORS preflight headers and `X-Requested-With` are refused too. `Trailer` is refused. JSON that parses to Infinity is refused after HMAC.
 
 ## License
 

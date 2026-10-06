@@ -93,6 +93,15 @@ export function assertJsonBudget(
       }
       return
     }
+    if (typeof node === 'number') {
+      if (!Number.isFinite(node)) {
+        throw new DoorbellError('JSON contains Infinity or NaN.', {
+          code: 'bad_json_number',
+          hint: 'JSON.parse turns 1e309 into Infinity. That is not a webhook field. Refuse it after HMAC.',
+        })
+      }
+      return
+    }
     if (!node || typeof node !== 'object') return
     if (Array.isArray(node)) {
       keys += node.length
@@ -144,4 +153,28 @@ export function assertFormBudget(
       })
     }
   }
+}
+
+/**
+ * After HMAC and budget. Freeze the tree so a handler cannot rewrite
+ * payload.id and then log a different event than the store claimed.
+ */
+export function deepFreeze(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value
+  if (Object.isFrozen(value)) return value
+  if (Array.isArray(value)) {
+    for (const item of value) deepFreeze(item)
+    return Object.freeze(value)
+  }
+  for (const k of Object.keys(value)) {
+    deepFreeze((value as Record<string, unknown>)[k])
+  }
+  return Object.freeze(value)
+}
+
+export function booleanField(payload: unknown, key: string): boolean | undefined {
+  if (!payload || typeof payload !== 'object') return undefined
+  const value = own(payload, key)
+  if (typeof value === 'boolean') return value
+  return undefined
 }
