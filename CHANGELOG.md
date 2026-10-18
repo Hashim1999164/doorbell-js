@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.16.0
+
+WebSocket upgrade headers (`Upgrade`, `Connection: Upgrade`, `Sec-WebSocket-*`) are refused. A webhook is a POST body, not a socket. Set `allowUpgrade` if a proxy adds them.
+
+`Accept` that prefers `text/html` or `application/xhtml+xml` is refused. That is how a browser navigates to the route. Set `allowHtmlAccept` if a proxy adds it.
+
+Empty JSON bodies are refused (Twilio forms still allow empty). HMAC still burns so the empty path is not cheaper. Set `allowEmptyBody` only if you know you need it.
+
+After HMAC, `event.raw` is sealed. `Object.freeze` does not lock TypedArray indices. A handler rewriting `event.raw[0]` would log different bytes than the ones that passed the seal. JSON arrays longer than `maxJsonArray` (default 50,000) are refused after HMAC.
+
 ## 1.15.0
 
 CORS preflight headers (`Access-Control-Request-*`) and `X-Requested-With` are refused. A webhook is not a browser API. Set `allowCorsProbe` / `allowXhr` if a proxy adds them.

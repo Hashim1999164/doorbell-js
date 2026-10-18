@@ -29,6 +29,28 @@ export function copyBytes(input: Uint8Array): Uint8Array {
   return out
 }
 
+/**
+ * Object.freeze does not lock TypedArray indices. A handler that rewrites
+ * event.raw[0] would log different bytes than the ones HMAC already checked.
+ */
+export function sealBytes(input: Uint8Array): Uint8Array {
+  const copy = copyBytes(input)
+  return new Proxy(copy, {
+    set(target, prop, value, receiver) {
+      if (prop === 'length' || (typeof prop === 'string' && /^\d+$/.test(prop))) {
+        throw new TypeError('doorbell raw bytes are sealed after HMAC')
+      }
+      return Reflect.set(target, prop, value, receiver)
+    },
+    defineProperty() {
+      return false
+    },
+    deleteProperty() {
+      return false
+    },
+  })
+}
+
 export function asRawBody(input: unknown): Uint8Array {
   if (input == null) {
     throw new DoorbellError('No webhook body.', {

@@ -70,6 +70,10 @@ Browsers send `Origin` and `Referer`. Stripe does not. doorbell refuses them so 
 
 `Authorization` and `Sec-Fetch-*` are refused the same way. WebCrypto on Node 18 uses `crypto.webcrypto` (globalThis.crypto.subtle only exists from Node 19). CORS preflight headers and `X-Requested-With` are refused too. `Trailer` is refused. JSON that parses to Infinity is refused after HMAC.
 
+WebSocket `Upgrade` / `Sec-WebSocket-*` and an `Accept` that prefers HTML are refused (browser fingerprints). Empty JSON bodies are refused. After HMAC, `event.raw` indices cannot be rewritten. Huge JSON arrays hit `maxJsonArray`.
+
+WebSocket `Upgrade` / `Sec-WebSocket-*` and an `Accept` that prefers HTML are refused (browser fingerprints). Empty JSON bodies are refused. After HMAC, `event.raw` indices cannot be rewritten. Huge JSON arrays hit `maxJsonArray`.
+
 ## License
 
 MIT. [Hashim1999164/doorbell-js](https://github.com/Hashim1999164/doorbell-js)

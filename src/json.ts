@@ -73,10 +73,11 @@ export function assertJsonObject(payload: unknown): void {
  */
 export function assertJsonBudget(
   value: unknown,
-  opts: { maxDepth: number; maxKeys: number; maxString?: number },
+  opts: { maxDepth: number; maxKeys: number; maxString?: number; maxArray?: number },
 ): void {
   let keys = 0
   const maxString = opts.maxString ?? 0
+  const maxArray = opts.maxArray ?? 0
   const walk = (node: unknown, depth: number): void => {
     if (depth > opts.maxDepth) {
       throw new DoorbellError('JSON is nested too deep.', {
@@ -104,6 +105,12 @@ export function assertJsonBudget(
     }
     if (!node || typeof node !== 'object') return
     if (Array.isArray(node)) {
+      if (maxArray > 0 && node.length > maxArray) {
+        throw new DoorbellError('JSON array is too long.', {
+          code: 'json_array_too_long',
+          hint: 'HMAC passed. A signed body can still ship a million-item array. Raise maxJsonArray if you want it.',
+        })
+      }
       keys += node.length
       if (keys > opts.maxKeys) {
         throw new DoorbellError('JSON has too many keys.', { code: 'json_too_wide' })

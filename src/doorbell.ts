@@ -1,4 +1,5 @@
-import { copyBytes, secretBytesUtf8 } from './bytes.js'
+import { burnHex } from './burn.js'
+import { copyBytes, sealBytes, secretBytesUtf8 } from './bytes.js'
 import { DoorbellError, missingSecretError, secretHint, tooLargeError } from './errors.js'
 import { handshake } from './handshake.js'
 import { assertHeaderBudget, contentTypeAllowed, header, headerMap } from './headers.js'
@@ -97,6 +98,16 @@ export type DoorbellConfig = {
   allowCorsProbe?: boolean
   /** X-Requested-With: XMLHttpRequest is a browser fingerprint. Stripe does not send it. */
   allowXhr?: boolean
+  /**
+   * Browsers send Upgrade / Sec-WebSocket-* for a WebSocket handshake.
+   * Stripe POSTs a body. Refuse the upgrade.
+   */
+  allowUpgrade?: boolean
+  /**
+   * Browsers navigating to the route send Accept: text/html first.
+   * Stripe asks for nothing useful in Accept. Refuse the HTML preference.
+   */
+  allowHtmlAccept?: boolean
   /** Cap how many handlers can run at once in this process. Extra callers get 503. */
   maxInflight?: number
   /** After Twilio HMAC. Unique form fields. */
@@ -105,6 +116,10 @@ export type DoorbellConfig = {
   maxFormValueChars?: number
   /** Query string length on the URL (Meta handshake needs a short one). */
   maxQueryLength?: number
+  /** After HMAC. One signed array can still be a million items. */
+  maxJsonArray?: number
+  /** Empty POST body. Stripe and GitHub always send JSON. Off unless you opt in. */
+  allowEmptyBody?: boolean
 }
 
 export type NormalizedRequest = {
@@ -268,6 +283,8 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     assertSecFetch(headers, config.allowSecFetch)
     assertCorsProbe(headers, config.allowCorsProbe)
     assertXhr(headers, config.allowXhr)
+    assertUpgrade(headers, config.allowUpgrade)
+    assertHtmlAccept(headers, config.allowHtmlAccept)
 
     const encoding = header(headers, 'content-encoding')
     if (encoding) {
@@ -364,16 +381,25 @@ export function doorbell(config: DoorbellConfig): Doorbell {
     }
 
     const secrets = asSecretList(cfg.secret)
+    const secretKeys = secrets.map((s) => copyBytes(secretBytesUtf8(s).key))
     const provider = providers[name]
     const toleranceSec = cfg.toleranceSec ?? config.toleranceSec ?? 300
     const now = config.now ?? Date.now
     const url = resolveUrl(config.publicUrl, req)
     if (name === 'twilio') assertTwilioPublicUrl(url, config.allowInsecureTwilioUrl)
 
+    if (!config.allowEmptyBody && name !== 'twilio' && raw.byteLength === 0) {
+      await burnHex(secretKeys, raw)
+      throw new DoorbellError('Webhook body is empty.', {
+        code: 'empty_body',
+        hint: 'Stripe and GitHub always POST JSON. An empty body is not a signed event. Set allowEmptyBody only if you know you need it.',
+      })
+    }
+
     const verified = await provider.verify({
       raw,
       headers,
-      secrets: secrets.map((s) => copyBytes(secretBytesUtf8(s).key)),
+      secrets: secretKeys,
       secretStrings: secrets,
       toleranceSec,
       now,
@@ -392,16 +418,22 @@ export function doorbell(config: DoorbellConfig): Doorbell {
         maxDepth: config.maxJsonDepth ?? 40,
         maxKeys: config.maxJsonKeys ?? 20_000,
         maxString: config.maxJsonString ?? 1_000_000,
+        maxArray: config.maxJsonArray ?? 50_000,
       })
     }
     deepFreeze(payload)
+    // Fingerprint and event id use the real bytes. node:crypto rejects a Proxy.
+    // Seal only what the handler sees so raw[i] = x cannot rewrite the sealed copy.
+    const eventId = capEventId(provider.eventId(headers, payload, raw), raw)
+    const eventType = capEventType(provider.eventType(headers, payload))
+    const sealedRaw = sealBytes(raw)
     const ac = new AbortController()
     const event: VerifiedEvent = Object.freeze({
       provider: name,
-      id: capEventId(provider.eventId(headers, payload, raw), raw),
-      type: capEventType(provider.eventType(headers, payload)),
+      id: eventId,
+      type: eventType,
       payload,
-      raw,
+      raw: sealedRaw,
       timestampSec: verified.timestampSec,
       signal: ac.signal,
       // Stripe-Account is not in the HMAC. Connect account id lives on the signed JSON.
@@ -816,6 +848,42 @@ function assertXhr(headers: HeaderMap, allow: boolean | undefined): void {
     code: 'browser_xhr',
     hint: 'XMLHttpRequest fingerprints this as a page call. Set allowXhr if a proxy adds it.',
   })
+}
+
+function assertUpgrade(headers: HeaderMap, allow: boolean | undefined): void {
+  if (allow) return
+  if (
+    header(headers, 'upgrade') ||
+    header(headers, 'sec-websocket-key') ||
+    header(headers, 'sec-websocket-version') ||
+    header(headers, 'sec-websocket-protocol')
+  ) {
+    throw new DoorbellError('WebSocket upgrade on a webhook. Browsers send that. Stripe does not.', {
+      code: 'browser_upgrade',
+      hint: 'Upgrade / Sec-WebSocket-* means a page opened a socket. A webhook is a POST body. Set allowUpgrade if a proxy adds them.',
+    })
+  }
+  const conn = header(headers, 'connection')
+  if (conn && /(?:^|[\s,])upgrade(?:[\s,]|$)/i.test(conn)) {
+    throw new DoorbellError('Connection: Upgrade on a webhook. That is a WebSocket handshake.', {
+      code: 'browser_upgrade',
+      hint: 'Stripe posts a plain HTTP body. Set allowUpgrade if a proxy adds Connection: Upgrade.',
+    })
+  }
+}
+
+function assertHtmlAccept(headers: HeaderMap, allow: boolean | undefined): void {
+  if (allow) return
+  const accept = header(headers, 'accept')
+  if (!accept) return
+  const first = accept.split(',')[0]!.trim().toLowerCase()
+  const type = first.split(';')[0]!.trim()
+  if (type === 'text/html' || type === 'application/xhtml+xml') {
+    throw new DoorbellError('Accept prefers HTML on a webhook. Browsers navigate with that. Stripe does not.', {
+      code: 'browser_accept',
+      hint: 'A tab opening this URL sends Accept: text/html first. Webhooks are not pages. Set allowHtmlAccept if a proxy adds it.',
+    })
+  }
 }
 
 function resolveUrl(
